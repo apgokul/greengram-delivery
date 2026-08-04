@@ -50,4 +50,52 @@ public class ProductAdminService {
 
         return savedProduct;
     }
+
+    // Add this inside ProductAdminService.java
+
+    @Transactional
+    public Product createNewProduct(Product newProduct, String adminUser) {
+        // 1. Prevent duplicate SKUs
+        if (productRepo.findBySku(newProduct.getSku()).isPresent()) {
+            throw new IllegalArgumentException("Product with SKU '" + newProduct.getSku() + "' already exists!");
+        }
+
+        // 2. Save the new product
+        Product savedProduct = productRepo.save(newProduct);
+
+        // 3. Log the initial inventory injection (if they started with stock > 0)
+        if (savedProduct.getStockQuantity() != null && savedProduct.getStockQuantity() > 0) {
+            InventoryAuditLog auditLog = new InventoryAuditLog();
+            auditLog.setSku(savedProduct.getSku());
+            auditLog.setOldStock(0);
+            auditLog.setNewStock(savedProduct.getStockQuantity());
+            auditLog.setChangeAmount(savedProduct.getStockQuantity());
+            auditLog.setReason("INITIAL_PRODUCT_SETUP");
+            auditLog.setChangedBy(adminUser);
+            auditRepo.save(auditLog);
+        }
+
+        log.info("🛡️ AUDIT: New product created: {} at ₹{}. User: {}",
+                savedProduct.getSku(), savedProduct.getCurrentPrice(), adminUser);
+
+        return savedProduct;
+    }
+
+    @Transactional
+    public Product updatePrice(String sku, java.math.BigDecimal newPrice, String adminUser) {
+        // 1. Lock the row during price change
+        Product product = productRepo.findBySkuForUpdate(sku)
+                .orElseThrow(() -> new RuntimeException("Product not found: " + sku));
+
+        java.math.BigDecimal oldPrice = product.getCurrentPrice();
+
+        // 2. Update price
+        product.setCurrentPrice(newPrice);
+        Product savedProduct = productRepo.save(product);
+
+        log.info("🛡️ AUDIT: Price for {} changed from ₹{} to ₹{}. User: {}",
+                sku, oldPrice, newPrice, adminUser);
+
+        return savedProduct;
+    }
 }

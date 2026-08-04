@@ -59,4 +59,51 @@ public class AdminProductController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         }
     }
+
+    // --- 1. CREATE A NEW PRODUCT ---
+    @PostMapping
+    public ResponseEntity<?> createProduct(
+            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestBody Product product) {
+
+        if (isUnauthorized(apiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
+        }
+
+        try {
+            Product createdProduct = adminService.createNewProduct(product, "Admin_API");
+            return ResponseEntity.status(HttpStatus.CREATED).body(createdProduct);
+        } catch (IllegalArgumentException e) {
+            // Catches the duplicate SKU error
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    // --- 2. CHANGE PRODUCT PRICE ---
+    @PatchMapping("/{sku}/price")
+    public ResponseEntity<?> updatePrice(
+            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @PathVariable String sku,
+            @RequestParam java.math.BigDecimal newPrice) {
+
+        if (isUnauthorized(apiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
+        }
+
+        try {
+            Product updatedProduct = adminService.updatePrice(sku, newPrice, "Admin_API");
+
+            return ResponseEntity.ok(java.util.Map.of(
+                    "success", true,
+                    "sku", updatedProduct.getSku(),
+                    "new_price", updatedProduct.getCurrentPrice(),
+                    "message", "Price updated successfully"
+            ));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
 }
