@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -98,4 +100,36 @@ public class ProductAdminService {
 
         return savedProduct;
     }
+
+    // Add this inside ProductAdminService.java
+
+    @Transactional
+    public Product toggleActiveStatus(String sku, boolean isActive, String adminUser) {
+        // 1. Lock the row
+        Product product = productRepo.findBySkuForUpdate(sku)
+                .orElseThrow(() -> new RuntimeException("Product not found: " + sku));
+
+        boolean oldStatus = product.isActive();
+
+        // 2. Update the status (Lombok generates setActive for primitive booleans)
+        product.setActive(isActive);
+        Product savedProduct = productRepo.save(product);
+
+        // 3. Log the action in the audit trail
+        InventoryAuditLog auditLog = new InventoryAuditLog();
+        auditLog.setSku(sku);
+        auditLog.setOldStock(product.getStockQuantity());
+        auditLog.setNewStock(product.getStockQuantity()); // Stock didn't change
+        auditLog.setChangeAmount(0);
+        auditLog.setReason(isActive ? "PRODUCT_ACTIVATED" : "PRODUCT_DEACTIVATED");
+        auditLog.setChangedBy(adminUser);
+        auditRepo.save(auditLog);
+
+        log.info("🛡️ AUDIT: Status for {} changed from {} to {}. User: {}",
+                sku, oldStatus, isActive, adminUser);
+
+        return savedProduct;
+    }
+
+    public List<Product> getAllProducts() { return productRepo.findAll(); }
 }

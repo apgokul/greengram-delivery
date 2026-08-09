@@ -106,4 +106,47 @@ public class AdminProductController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(java.util.Map.of("error", e.getMessage()));
         }
     }
+    // Add this inside AdminProductController.java
+
+    // Toggle active Status
+    @PatchMapping("/{sku}/toggle-active")
+    public ResponseEntity<?> toggleActiveStatus(
+            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @PathVariable String sku,
+            @RequestParam boolean isActive) {
+
+        if (isUnauthorized(apiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
+        }
+
+        try {
+            Product updatedProduct = adminService.toggleActiveStatus(sku, isActive, "Admin_API");
+
+            return ResponseEntity.ok(java.util.Map.of(
+                    "success", true,
+                    "sku", updatedProduct.getSku(),
+                    "is_active", updatedProduct.isActive(),
+                    "message", "Product status updated to " + (isActive ? "Active" : "Hidden")
+            ));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping
+    public ResponseEntity<?> getAllProducts(
+            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey) {
+
+        if (isUnauthorized(apiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                    .body(java.util.Map.of("error", "Unauthorized"));
+        }
+
+        // Assuming you have a standard findAll() in your ProductRepository
+        return ResponseEntity.ok(adminService.getAllProducts());
+    }
+
+
 }

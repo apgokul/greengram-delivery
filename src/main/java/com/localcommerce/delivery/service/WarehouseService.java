@@ -1,19 +1,18 @@
 package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
-import com.localcommerce.delivery.utils.WhatsAppConstants;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.OrderItem;
+import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
+import com.localcommerce.delivery.repository.ProductRepository;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.math.BigDecimal;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +21,7 @@ public class WarehouseService {
 
     private final CustomerOrderRepository orderRepo;
     private final WhatsAppOutboundClient outboundClient;
+    private final ProductRepository productRepo;
 
 
     // The single phone number sitting on your packing table
@@ -75,14 +75,25 @@ public class WarehouseService {
 
         log.info("Triggering Routing Engine for Order: {}", orderId);
     }
-
     private void handleStockIssue(Long orderId) {
         CustomerOrder order = orderRepo.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
+        // 1. Restore the inventory for every item in the cart!
+        for (OrderItem item : order.getItems()) {
+            // Using the pessimistic lock to safely put stock back
+            Product product = productRepo.findBySkuForUpdate(item.getProduct().getSku())
+                    .orElseThrow(() -> new RuntimeException("Product missing: " + item.getProduct().getSku()));
+
+            product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
+            productRepo.save(product);
+        }
+
+        // 2. Cancel the order
         order.advanceStateTo(OrderStatus.CANCELLED);
         orderRepo.save(order);
 
+        // 3. Alert the customer
         String customerPhone = order.getCustomer().getWhatsappNumber();
         outboundClient.sendTextUpdate(customerPhone, WhatsAppConstants.STOCK_ISSUE_CANCELLATION);
     }
@@ -92,32 +103,4 @@ public class WarehouseService {
         return Long.parseLong(buttonId.replace(prefix, ""));
     }
 
-    @Transactional
-    public void removeItemFromOrder(Long orderId, int itemIndexToRemove) {
-
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
-
-        // 1. Remove the item (Indices are 0-based, human input is 1-based)
-        List<OrderItem> items = order.getItems();
-        if (itemIndexToRemove > 0 && itemIndexToRemove <= items.size()) {
-            OrderItem removedItem = items.remove(itemIndexToRemove - 1);
-
-            // 2. Recalculate the Total Bill
-            BigDecimal newTotal = items.stream()
-                    .map(item -> item.getLockedPrice().multiply(new BigDecimal(item.getQuantity())))
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            order.setTotalAmount(newTotal);
-            order.advanceStateTo(OrderStatus.PACKING); // Force state to packing
-            orderRepo.save(order);
-
-            // 3. Alert the Customer transparently (Crucial for trust)
-            String customerPhone = order.getCustomer().getWhatsappNumber();
-            outboundClient.sendOrderEditedAlert(customerPhone, removedItem.getProduct().getName(), newTotal.toString());
-
-            // 4. Send the "Bag Ready" button back to the warehouse so they can finish
-            outboundClient.sendBagReadyPrompt(warehousePhoneNumber, order);
-        }
-    }
 }

@@ -148,6 +148,7 @@ public class WhatsAppWebhookController {
 
                         // 3. Extract SKUs only for items that actually have inventory!
                         List<String> availableSkus = allProducts.stream()
+                                .filter(Product::isActive)
                                 .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
                                 .map(Product::getSku)
                                 .toList();
