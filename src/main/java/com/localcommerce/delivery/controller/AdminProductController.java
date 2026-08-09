@@ -29,6 +29,7 @@ public class AdminProductController {
     @PatchMapping("/{sku}/stock")
     public ResponseEntity<?> adjustStock(
             @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam int adjustmentAmount,
             @RequestParam String reason) {
@@ -41,8 +42,7 @@ public class AdminProductController {
 
         // 2. Execute Business Logic
         try {
-            // "Admin_API" is hardcoded here as the actor, but later you can pass specific user names
-            Product updatedProduct = adminService.adjustStock(sku, adjustmentAmount, reason, "Admin_API");
+            Product updatedProduct = adminService.adjustStock(sku, adjustmentAmount, reason, adminUser);
 
             return ResponseEntity.ok(Map.of(
                     "success", true,
@@ -64,6 +64,7 @@ public class AdminProductController {
     @PostMapping
     public ResponseEntity<?> createProduct(
             @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @RequestBody Product product) {
 
         if (isUnauthorized(apiKey)) {
@@ -72,7 +73,7 @@ public class AdminProductController {
         }
 
         try {
-            Product createdProduct = adminService.createNewProduct(product, "Admin_API");
+            Product createdProduct = adminService.createNewProduct(product, adminUser);
             return ResponseEntity.status(HttpStatus.CREATED).body(createdProduct);
         } catch (IllegalArgumentException e) {
             // Catches the duplicate SKU error
@@ -84,6 +85,7 @@ public class AdminProductController {
     @PatchMapping("/{sku}/price")
     public ResponseEntity<?> updatePrice(
             @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam java.math.BigDecimal newPrice) {
 
@@ -93,7 +95,7 @@ public class AdminProductController {
         }
 
         try {
-            Product updatedProduct = adminService.updatePrice(sku, newPrice, "Admin_API");
+            Product updatedProduct = adminService.updatePrice(sku, newPrice, adminUser);
 
             return ResponseEntity.ok(java.util.Map.of(
                     "success", true,
@@ -112,6 +114,7 @@ public class AdminProductController {
     @PatchMapping("/{sku}/toggle-active")
     public ResponseEntity<?> toggleActiveStatus(
             @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam boolean isActive) {
 
@@ -121,7 +124,7 @@ public class AdminProductController {
         }
 
         try {
-            Product updatedProduct = adminService.toggleActiveStatus(sku, isActive, "Admin_API");
+            Product updatedProduct = adminService.toggleActiveStatus(sku, isActive, adminUser);
 
             return ResponseEntity.ok(java.util.Map.of(
                     "success", true,
@@ -137,7 +140,8 @@ public class AdminProductController {
 
     @GetMapping
     public ResponseEntity<?> getAllProducts(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey) {
+            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
 
         if (isUnauthorized(apiKey)) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
