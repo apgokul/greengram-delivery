@@ -35,6 +35,6 @@ public class Product {
     private Long version;
 
     // Crucial for the "Out of Stock" logic
-    private Integer availableStock;
+//    private Integer availableStock;
     private boolean isActive;
 }
