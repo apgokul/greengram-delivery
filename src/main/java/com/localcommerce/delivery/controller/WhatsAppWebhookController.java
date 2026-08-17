@@ -29,9 +29,6 @@ public class WhatsAppWebhookController {
     @Value("${whatsapp.verify.token}")
     private String verifyToken;
 
-    @Value("${warehouse.phone.number}")
-    private String warehousePhoneNumber;
-
     @Value("#{'${authorized.rider.numbers}'.split(',')}")
     private List<String> authorizedRiders;
 
@@ -175,6 +172,13 @@ public class WhatsAppWebhookController {
                     }
                     else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
                         outboundClient.sendLocationRequestPrompt(primaryCustomerKey);
+                    }
+                    else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                        Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
+                        orderService.finalizeOrderCheckout(orderId);
+
+                        // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
+                        outboundClient.sendTextUpdate(primaryCustomerKey, "✅ Order confirmed! Sending it to our local store for packing.");
                     }
                     else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER)) {
                         warehouseService.processButtonTap(phoneNumber, buttonId);
