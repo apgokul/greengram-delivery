@@ -71,11 +71,6 @@ public class WhatsAppConstants {
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 
-    // Order edited alert
-    public static final String ORDER_EDITED_ALERT_TEMPLATE =
-            "⚠️ *Order Update*\n\nWe apologize, but %s is currently out of stock on our shelves. " +
-                    "We have removed it from your bill. \n\n💳 *Your new total is ₹%s.*\n\nOur team is packing the rest of your items now!";
-
     // Warehouse order alert
     public static final String WAREHOUSE_NEW_ORDER_ALERT_TEMPLATE =
             "🚨 *NEW ORDER: %s*\n📍 Customer: %s\n\n*Items to Pack:*\n%s\n\nAction required:";
@@ -93,32 +88,43 @@ public class WhatsAppConstants {
 
     // Batch Delivery Manifest Constants
     public static final String RIDER_MANIFEST_HEADER_TEMPLATE =
-            "📋 *DAILY DISPATCH MANIFEST*\n" +
-                    "• *Run ID:* RUN-%s\n" +
-                    "• *Total Drops:* %d\n" +
-                    "• *Total Cash to Collect:* ₹%s\n" +
-                    "--------------------------------\n\n" +
-                    "🎒 *LOADING CHECKLIST:*\n";
+            """
+                    📋 *DAILY DISPATCH MANIFEST*
+                    • *Run ID:* RUN-%s
+                    • *Total Drops:* %d
+                    • *Total Cash to Collect:* ₹%s
+                    --------------------------------
+                    
+                    🎒 *LOADING CHECKLIST:*
+                    """;
 
     public static final String RIDER_MANIFEST_ITEM_TEMPLATE =
-            "%d. Order: %s | Cash: ₹%s\n" +
-                    "   📍 Coordinates: %s, %s\n\n";
+            """
+                    %d. Order: %s | Cash: ₹%s
+                       📍 Coordinates: %s, %s
+                    
+                    """;
 
     public static final String RIDER_MANIFEST_FOOTER =
             "--------------------------------\n" +
                     "👉 Individual delivery action cards will follow immediately below. Please load your vehicle accordingly.";
 
     public static final String OUT_OF_BOUNDS_TEMPLATE =
-            "😔 *Out of Delivery Zone*\n\n" +
-                    "You are currently %.1f km away, but we only deliver within %.1f km of our store. " +
-                    "We hope to expand to your neighborhood soon!";
+            """
+                    😔 *Out of Delivery Zone*
+                    
+                    You are currently %.1f km away, but we only deliver within %.1f km of our store. \
+                    We hope to expand to your neighborhood soon!""";
 
 
     public static final String LOW_STOCK_ALERT =
-            "⚠️ *LOW STOCK ALERT*\n\n" +
-                    "Item: %s (SKU: %s)\n" +
-                    "Remaining Stock: %d units\n\n" +
-                    "Please restock soon to avoid missing sales.";
+            """
+                    ⚠️ *LOW STOCK ALERT*
+                    
+                    Item: %s (SKU: %s)
+                    Remaining Stock: %d units
+                    
+                    Please restock soon to avoid missing sales.""";
 
 }
 

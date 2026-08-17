@@ -4,7 +4,6 @@ import com.localcommerce.delivery.client.WhatsAppOutboundClient;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
-import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,7 +33,7 @@ public class WarehouseAlertService {
 
     private final RestTemplate restTemplate;
 
-    private WhatsAppOutboundClient outboundClient;
+    private final WhatsAppOutboundClient outboundClient;
 
     public void sendNewOrderAlert(CustomerOrder order) {
 

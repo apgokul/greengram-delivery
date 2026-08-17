@@ -3,9 +3,7 @@ package com.localcommerce.delivery.client;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.service.SmsFallbackService;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
-import lombok.AllArgsConstructor;
 import lombok.RequiredArgsConstructor;
-import org.jspecify.annotations.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -95,7 +93,6 @@ public class WhatsAppOutboundClient {
     // Helper method to execute the HTTP call
     @Retryable(
             retryFor = {RestClientException.class},
-            maxAttempts = 3,
             backoff = @Backoff(delay = 2000) // Wait 2 seconds between tries
     )
     private void sendPostRequest(Map<String, Object> payload) {
@@ -140,27 +137,19 @@ public class WhatsAppOutboundClient {
         sendTextUpdate(toPhoneNumber, message);
     }
 
-    /**
-     * EDIT ORDER: Transparent Partial Fulfillment
-     */
-    public void sendOrderEditedAlert(String toPhoneNumber, String removedItemName, String newTotal) {
-        String message = String.format(
-                WhatsAppConstants.ORDER_EDITED_ALERT_TEMPLATE,
-                removedItemName, newTotal
-        );
-        sendTextUpdate(toPhoneNumber, message);
-    }
-
     public void sendOrderSummaryPrompt(String toPhoneNumber, com.localcommerce.delivery.model.CustomerOrder order) {
 
         // Calculate the grand total to display
         java.math.BigDecimal grandTotal = order.getTotalAmount();
 
         String bodyText = String.format(
-                "🛒 *Order Summary*\n\n" +
-                        "-------------------\n" +
-                        "💰 *Grand Total: ₹%s*\n\n" +
-                        "Tap below to confirm your order and send it to our local store for packing!",
+                """
+                        🛒 *Order Summary*
+                        
+                        -------------------
+                        💰 *Grand Total: ₹%s*
+                        
+                        Tap below to confirm your order and send it to our local store for packing!""",
                 grandTotal.toString()
         );
 
@@ -266,11 +255,14 @@ public class WhatsAppOutboundClient {
         String totalAmount = order.getTotalAmount().toString();
 
         String bodyText = String.format(
-                "📦 *ORDER DISPATCH*\n\n" +
-                        "• *ID:* %s\n" +
-                        "• *Collect Cash:* ₹%s\n" +
-                        "• *Address:* %s\n\n" +
-                        "Tap below ONLY when you have handed this bag to the customer.",
+                """
+                        📦 *ORDER DISPATCH*
+                        
+                        • *ID:* %s
+                        • *Collect Cash:* ₹%s
+                        • *Address:* %s
+                        
+                        Tap below ONLY when you have handed this bag to the customer.""",
                 order.getDisplayId(), totalAmount, googleMapsLink
         );
 

@@ -1,6 +1,5 @@
 package com.localcommerce.delivery.dto;
 
-import com.localcommerce.delivery.model.Product;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 

@@ -41,9 +41,11 @@ public class GlobalExceptionHandler {
         if (activePhoneNumber != null) {
             log.info("Dispatching fallback apology message to {}", activePhoneNumber);
 
-            String fallbackMessage = "⚠️ *Oops! Something went wrong on our end.*\n\n" +
-                    "Our technical team has been notified. Please type 'Hi' to restart your order, " +
-                    "or contact support if the issue persists.";
+            String fallbackMessage = """
+                    ⚠️ *Oops! Something went wrong on our end.*
+                    
+                    Our technical team has been notified. Please type 'Hi' to restart your order, \
+                    or contact support if the issue persists.""";
             try {
                 outboundClient.sendTextUpdate(activePhoneNumber, fallbackMessage);
             } catch (Exception outboundEx) {

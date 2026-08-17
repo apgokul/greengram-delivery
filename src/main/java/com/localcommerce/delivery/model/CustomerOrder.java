@@ -47,10 +47,6 @@ public class CustomerOrder {
     @JoinColumn(name = "customer_id")
     private Customer customer;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "rider_id")
-    private Rider rider; // Can be null until the "READY" state
-
     @Enumerated(EnumType.STRING)
     private OrderStatus status;
     // CREATED -> ACCEPTED -> PACKING -> READY -> DISPATCHED -> DELIVERED (or CANCELLED)

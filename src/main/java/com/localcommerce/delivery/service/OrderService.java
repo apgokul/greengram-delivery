@@ -11,11 +11,11 @@ import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
+import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -63,7 +63,6 @@ public class OrderService {
 
         // 1. Resolve identity gracefully
         Customer customer = customerIdentityService.resolveCustomerIdentity(bsuid, phoneNumber, whatsappName);
-        String recipientId = customer.getRecipientId();
 
         // 2. PASS 1: Validate stock for ALL items FIRST using Pessimistic Locks
         // (Prevents deducting Item 1 if Item 2 fails stock check)
@@ -93,7 +92,7 @@ public class OrderService {
             // Safely deduct stock
             product.setStockQuantity(product.getStockQuantity() - dto.getQuantity());
 
-            if (product.getStockQuantity() <= 5) {
+            if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) { // Low stock threshold should be dynamic
                 warehouseAlertService.sendLowStockAlert(product);
             }
 
