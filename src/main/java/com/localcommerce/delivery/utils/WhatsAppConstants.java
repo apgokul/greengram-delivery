@@ -61,13 +61,13 @@ public class WhatsAppConstants {
 
     // Order status alerts
     public static final String ORDER_CONFIRMED_ALERT =
-            "✅ *Order Confirmed!*\n\nOur team is packing your groceries now at our local store. We will let you know as soon as it's out for delivery.";
+            "✅ *Order confirmed!*\n\nWe are packing it now and it will be delivered to you today. We will let you know as soon as it's out for delivery.";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
             "🛵 *Out for Delivery!*\n\nOur rider, %s, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
 
     public static final String DELIVERED_ALERT =
-            "📦 *Delivered!*\n\nEnjoy your groceries! If you need any help with your items, just reply to this message. See you next time!";
+            "📦 *Delivered!*\n\nEnjoy your groceries! If you need any help with your items, please call this number. See you next time!";
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 
@@ -101,7 +101,6 @@ public class WhatsAppConstants {
     public static final String RIDER_MANIFEST_ITEM_TEMPLATE =
             """
                     %d. Order: %s | Cash: ₹%s
-                       📍 Coordinates: %s, %s
                     
                     """;
 
@@ -125,6 +124,14 @@ public class WhatsAppConstants {
                     Remaining Stock: %d units
                     
                     Please restock soon to avoid missing sales.""";
+
+    public static final String ORDER_SUMMARY =
+            """
+                    🛒 *Order Summary*\n\n
+                    %s\n\n
+                    ---------------------------\n
+                    💰 *Grand Total: ₹%s*\n\n
+                    Tap below to confirm your order!""";
 
 }
 

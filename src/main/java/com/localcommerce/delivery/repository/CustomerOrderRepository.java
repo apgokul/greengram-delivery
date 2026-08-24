@@ -11,7 +11,6 @@ import java.util.Optional;
 @Repository
 public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, Long> {
 
-    // Used when the warehouse taps the "✅ Accept ORD-1042" button
     Optional<CustomerOrder> findByDisplayId(String displayId);
 
     // Used by the warehouse dashboard to see what needs to be packed right now

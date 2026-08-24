@@ -14,6 +14,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -71,6 +73,7 @@ public class WarehouseService {
 
         // 1. Move state to READY
         order.advanceStateTo(OrderStatus.READY);
+        order.setReadyAt(LocalDateTime.now());
         orderRepo.save(order);
 
         log.info("Triggering Routing Engine for Order: {}", orderId);

@@ -67,132 +67,141 @@ public class WhatsAppWebhookController {
                     !payload.getEntry().isEmpty() &&
                     payload.getEntry().getFirst().getChanges() != null &&
                     !payload.getEntry().getFirst().getChanges().isEmpty() &&
-                    payload.getEntry().getFirst().getChanges().getFirst().getValue().getMessages() != null &&
-                    !payload.getEntry().getFirst().getChanges().getFirst().getValue().getMessages().isEmpty()) {
+                    payload.getEntry().getFirst().getChanges().getFirst().getValue() != null) {
 
                 var value = payload.getEntry().getFirst().getChanges().getFirst().getValue();
-                WhatsAppWebhookPayload.Message message = value.getMessages().getFirst();
+                if (value.getMessages() != null && !value.getMessages().isEmpty()) {
+                    WhatsAppWebhookPayload.Message message = value.getMessages().getFirst();
 
-                // 1. Extract Phone Number
-                String phoneNumber = message.getFrom();
+                    // 1. Extract Phone Number
+                    String phoneNumber = message.getFrom();
 
-                // 2. Extract Contact Info safely
-                String bsuid = null;
-                String whatsappName = "Valued Customer";
+                    // 2. Extract Contact Info safely
+                    String bsuid = null;
+                    String whatsappName = "Valued Customer";
 
-                if (value.getContacts() != null && !value.getContacts().isEmpty()) {
-                    WhatsAppWebhookPayload.Contact contact = value.getContacts().getFirst();
-                    bsuid = contact.getUser_id();
-                    if (contact.getProfile() != null && contact.getProfile().getName() != null) {
-                        whatsappName = contact.getProfile().getName();
-                    }
-                }
-
-                // Fallback: If BSUID isn't present (e.g. in legacy tests), use phone number as target ID
-                String primaryCustomerKey = (bsuid != null && !bsuid.isBlank()) ? bsuid : phoneNumber;
-
-                // Set context thread for logging
-                UserContext.setSenderId(primaryCustomerKey);
-
-                String messageType = message.getType();
-
-                if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
-                    List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
-                    List<CartItemDTO> internalCart = metaItems.stream()
-                            .map(item -> new CartItemDTO(
-                                    item.getProductRetailerId(),
-                                    Integer.parseInt(item.getQuantity())
-                            ))
-                            .toList();
-
-
-                    OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
-
-                // 2. Handle the outbound messaging based on the result!
-                    if (!result.isSuccess()) {
-                        // Stock failed. Send the exact error message back to the customer.
-                        outboundClient.sendTextUpdate(primaryCustomerKey, result.getMessage());
-                    } else {
-                        // Success! Get the saved order and customer
-                        CustomerOrder savedOrder = result.getOrder();
-                        Customer customer = savedOrder.getCustomer();
-
-                        // Check if we already have their location on file
-                        if (customer.getLatitude() != null && customer.getLongitude() != null) {
-                            outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId());
-                        } else {
-                            outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
+                    if (value.getContacts() != null && !value.getContacts().isEmpty()) {
+                        WhatsAppWebhookPayload.Contact contact = value.getContacts().getFirst();
+                        bsuid = contact.getUser_id();
+                        if (contact.getProfile() != null && contact.getProfile().getName() != null) {
+                            whatsappName = contact.getProfile().getName();
                         }
                     }
-                }
-                else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
-                    String command = message.getText().getBody().trim().toUpperCase();
 
-                    if ("DISPATCH".equals(command)) {
-                        if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
-                            String resultMessage = batchingService.createManualBatchRun(phoneNumber);
-                            outboundClient.sendTextUpdate(phoneNumber, resultMessage);
-                        } else {
-                            log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
-                            outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
+                    // Fallback: If BSUID isn't present (e.g. in legacy tests), use phone number as target ID
+                    String primaryCustomerKey = (bsuid != null && !bsuid.isBlank()) ? bsuid : phoneNumber;
+
+                    // Set context thread for logging
+                    UserContext.setSenderId(primaryCustomerKey);
+
+                    String messageType = message.getType();
+                    if (value.getMessages() != null && !value.getMessages().isEmpty()) {
+                        if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
+                            List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
+                            List<CartItemDTO> internalCart = metaItems.stream()
+                                    .map(item -> new CartItemDTO(
+                                            item.getProductRetailerId(),
+                                            Integer.parseInt(item.getQuantity())
+                                    ))
+                                    .toList();
+
+
+                            OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
+
+                            // 2. Handle the outbound messaging based on the result!
+                            if (!result.isSuccess()) {
+                                // Stock failed. Send the exact error message back to the customer.
+                                outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
+                            } else {
+                                // Success! Get the saved order and customer
+                                CustomerOrder savedOrder = result.getOrder();
+                                Customer customer = savedOrder.getCustomer();
+
+                                // Check if we already have their location on file
+                                if (customer.getLatitude() != null && customer.getLongitude() != null) {
+                                    outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId());
+                                } else {
+                                    outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
+                                }
+                            }
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
+                            String command = message.getText().getBody().trim().toUpperCase();
+
+                            if ("DISPATCH".equals(command)) {
+                                if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
+                                    batchingService.createManualBatchRun(phoneNumber);
+                                } else {
+                                    log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
+                                    outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
+                                }
+                            } else {
+
+                                // 2. Fetch all products from your DB
+                                List<Product> allProducts = productRepository.findAll();
+
+                                // 3. Extract SKUs only for items that actually have inventory!
+                                List<String> availableSkus = allProducts.stream()
+                                        .filter(Product::isActive)
+                                        .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
+                                        .collect(java.util.stream.Collectors.groupingBy(
+                                                p -> p.getSku().split("_")[0]
+                                        ))
+                                        .values().stream()
+                                        .map(groupedVariants -> groupedVariants.getFirst().getSku())
+                                        .toList();
+
+                                // 4. Send the dynamic catalog!
+                                if (!availableSkus.isEmpty()) {
+                                    outboundClient.sendCatalogMessage(phoneNumber, availableSkus);
+                                } else {
+                                    outboundClient.sendTextUpdate(phoneNumber, "We are currently completely sold out! Please check back later.");
+                                }
+                            }
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
+                            Double lat = message.getLocation().getLatitude();
+                            Double lng = message.getLocation().getLongitude();
+                            orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
+                            String buttonId = message.getInteractive().getButton_reply().getId();
+
+                            if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
+                                orderService.confirmSavedLocation(orderId);
+                            } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
+                                outboundClient.sendLocationRequestPrompt(phoneNumber);
+                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
+                                orderService.finalizeOrderCheckout(orderId);
+
+                                // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
+                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                            } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
+                                    buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
+                                    buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
+
+                                warehouseService.processButtonTap(phoneNumber, buttonId);
+                            } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
+                                orderService.completeDelivery(orderId);
+                            }
                         }
-                    } else {
-                        // 1. Determine the target ID (Prefer phone number over BSUID)
-                        String targetId = (phoneNumber != null && !phoneNumber.isBlank()) ? phoneNumber : primaryCustomerKey;
+                    } else if (value.getStatuses() != null && !value.getStatuses().isEmpty()) {
+                        WhatsAppWebhookPayload.Status status = value.getStatuses().getFirst();
 
-                        // 2. Fetch all products from your DB
-                        List<Product> allProducts = productRepository.findAll();
+                        if ("failed".equals(status.getStatus()) && status.getErrors() != null) {
+                            WhatsAppWebhookPayload.Error error = status.getErrors().getFirst();
 
-                        // 3. Extract SKUs only for items that actually have inventory!
-                        List<String> availableSkus = allProducts.stream()
-                                .filter(Product::isActive)
-                                .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
-                                .map(Product::getSku)
-                                .toList();
-
-                        // 4. Send the dynamic catalog!
-                        if (!availableSkus.isEmpty()) {
-                            outboundClient.sendCatalogMessage(targetId, availableSkus);
-                        } else {
-                            outboundClient.sendTextUpdate(targetId, "We are currently completely sold out! Please check back later.");
+                            log.error("🚨 WHATSAPP SEND FAILED! Recipient: {}, Code: {}, Reason: {}",
+                                    status.getRecipient_id(),
+                                    error.getCode(),
+                                    error.getMessage());
                         }
-                    }
-                }
-                else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
-                    Double lat = message.getLocation().getLatitude();
-                    Double lng = message.getLocation().getLongitude();
-                    orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
-                }
-                else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
-                    String buttonId = message.getInteractive().getButton_reply().getId();
-
-                    if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
-                        Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
-                        orderService.confirmSavedLocation(orderId);
-                    }
-                    else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
-                        outboundClient.sendLocationRequestPrompt(primaryCustomerKey);
-                    }
-                    else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
-                        Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
-                        orderService.finalizeOrderCheckout(orderId);
-
-                        // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
-                        outboundClient.sendTextUpdate(primaryCustomerKey, "✅ Order confirmed! Sending it to our local store for packing.");
-                    }
-                    else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER)) {
-                        warehouseService.processButtonTap(phoneNumber, buttonId);
-                    }
-                    else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
-                        Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
-                        orderService.completeDelivery(orderId);
                     }
                 }
             }
         } catch (Exception e) {
             log.error("Error processing WhatsApp webhook payload", e);
         }
-
         return ResponseEntity.ok().build();
     }
 }

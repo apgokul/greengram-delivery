@@ -32,6 +32,7 @@ public class WhatsAppWebhookPayload {
         private Metadata metadata;
         private List<Contact> contacts;
         private List<Message> messages;
+        private List<Status> statuses; // <-- ADD THIS
     }
 
     @Data
@@ -121,5 +122,22 @@ public class WhatsAppWebhookPayload {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class TextPayload {
         private String body;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Status {
+        private String id;
+        private String status;
+        private String recipient_id;
+        private List<Error> errors;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Error {
+        private int code;
+        private String title;
+        private String message;
     }
 }

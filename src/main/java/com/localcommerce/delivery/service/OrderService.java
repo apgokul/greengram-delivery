@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -88,13 +89,6 @@ public class OrderService {
         for (CartItemDTO dto : cartItems) {
             // Retrieve the locked product from the managed persistence context
             Product product = productRepo.findBySkuForUpdate(dto.getSku()).get();
-
-            // Safely deduct stock
-            product.setStockQuantity(product.getStockQuantity() - dto.getQuantity());
-
-            if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) { // Low stock threshold should be dynamic
-                warehouseAlertService.sendLowStockAlert(product);
-            }
 
             OrderItem item = new OrderItem();
             item.setProduct(product);
@@ -177,6 +171,19 @@ public class OrderService {
         CustomerOrder order = orderRepo.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
+        for (OrderItem item : order.getItems()) {
+            Product product = item.getProduct();
+            product.setStockQuantity(product.getStockQuantity() - item.getQuantity());
+
+            if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) {
+                warehouseAlertService.sendLowStockAlert(product);
+            }
+            productRepo.save(product);
+        }
+
+        order.advanceStateTo(OrderStatus.PENDING_WAREHOUSE);
+        orderRepo.save(order);
+
         warehouseAlertService.sendNewOrderAlert(order);
     }
 
@@ -186,6 +193,7 @@ public class OrderService {
                 .orElseThrow(() -> new EntityNotFoundException("Order not found"));
 
         order.advanceStateTo(OrderStatus.DELIVERED);
+        order.setDeliveredAt(LocalDateTime.now());
         orderRepo.save(order);
 
         // FIX 4: Use customer.getRecipientId() for delivery alerts

@@ -30,14 +30,15 @@ public class BatchingService {
     // Remove the @Scheduled annotation!
 
     @Transactional
-    public String createManualBatchRun(String riderPhoneNumber) {
+    public void createManualBatchRun(String riderPhoneNumber) {
         log.info("Starting Manual Batch Routing for Rider: {}", riderPhoneNumber);
 
         // 1. Find all bags that are packed and sitting on the rack
         List<CustomerOrder> readyOrders = orderRepo.findByStatus(OrderStatus.READY);
 
         if (readyOrders.isEmpty()) {
-            return "⚠️ No orders are currently ready for dispatch.";
+            outboundClient.sendTextUpdate(riderPhoneNumber, "⚠️ No orders are currently ready for dispatch.");
+            return;
         }
 
         // 2. Create the Delivery Run
@@ -66,8 +67,6 @@ public class BatchingService {
             outboundClient.sendRiderDeliveryCard(riderPhoneNumber, order);
         }
         sendManifestToRider(run, readyOrders);
-
-        return "✅ Successfully batched " + readyOrders.size() + " orders for dispatch! Manifest sent.";
     }
 
     // Inside com.localcommerce.delivery.service.BatchingService
@@ -97,9 +96,7 @@ public class BatchingService {
                     WhatsAppConstants.RIDER_MANIFEST_ITEM_TEMPLATE,
                     itemNumber++,
                     order.getDisplayId(),
-                    order.getTotalAmount().toString(),
-                    order.getDeliveryLatitude(),
-                    order.getDeliveryLongitude()
+                    order.getTotalAmount().toString()
             ));
         }
 
