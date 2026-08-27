@@ -21,7 +21,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @Service
 @Transactional
@@ -34,6 +37,7 @@ public class OrderService {
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseAlertService warehouseAlertService;
     private final CustomerIdentityService customerIdentityService;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${store.latitude}")
     private Double storeLat;
@@ -49,13 +53,15 @@ public class OrderService {
                         CustomerOrderRepository orderRepo,
                         WhatsAppOutboundClient outboundClient,
                         WarehouseAlertService warehouseAlertService,
-                        CustomerIdentityService customerIdentityService) {
+                        CustomerIdentityService customerIdentityService,
+                        PlatformTransactionManager transactionManager) {
         this.customerRepo = customerRepo;
         this.productRepo = productRepo;
         this.orderRepo = orderRepo;
         this.outboundClient = outboundClient;
         this.warehouseAlertService = warehouseAlertService;
         this.customerIdentityService = customerIdentityService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional // 1. CRITICAL: Enforces a single atomic transaction & enables DB locks
@@ -88,13 +94,6 @@ public class OrderService {
         for (CartItemDTO dto : cartItems) {
             // Retrieve the locked product from the managed persistence context
             Product product = productRepo.findBySkuForUpdate(dto.getSku()).get();
-
-            // Safely deduct stock
-            product.setStockQuantity(product.getStockQuantity() - dto.getQuantity());
-
-            if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) { // Low stock threshold should be dynamic
-                warehouseAlertService.sendLowStockAlert(product);
-            }
 
             OrderItem item = new OrderItem();
             item.setProduct(product);
@@ -172,12 +171,73 @@ public class OrderService {
         outboundClient.sendOrderSummaryPrompt(customer.getRecipientId(), order);
     }
 
-    @Transactional
-    public void finalizeOrderCheckout(Long orderId) {
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+    public static class CheckoutResult {
+        public final CustomerOrder order;
+        public final List<Product> lowStockProducts;
+        public CheckoutResult(CustomerOrder order, List<Product> lowStockProducts) {
+            this.order = order;
+            this.lowStockProducts = lowStockProducts;
+        }
+    }
 
-        warehouseAlertService.sendNewOrderAlert(order);
+    @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
+    public void finalizeOrderCheckout(Long orderId) {
+        CheckoutResult result = transactionTemplate.execute(status -> {
+            CustomerOrder order = orderRepo.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
+
+            // Idempotency guard — prevents double-processing if the customer taps Confirm twice
+            if (order.getStatus() != OrderStatus.CREATED) {
+                log.warn("Attempted to finalize order {} already in state {}. Ignoring.",
+                        orderId, order.getStatus());
+                return null;
+            }
+
+            java.util.List<Product> lowStockProducts = new java.util.ArrayList<>();
+
+            for (OrderItem item : order.getItems()) {
+                // Acquire a fresh pessimistic write lock on this product row.
+                // Blocks any concurrent finalizeOrderCheckout for the same product
+                // until this transaction commits or rolls back.
+                Product product = productRepo.findBySkuForUpdate(item.getProduct().getSku())
+                        .orElseThrow(() -> new RuntimeException(
+                                "Product missing during checkout: " + item.getProduct().getSku()));
+
+                // Re-verify stock is still sufficient after acquiring the lock.
+                // This closes the race window between processNewCart and finalizeOrderCheckout.
+                if (product.getStockQuantity() < item.getQuantity()) {
+                    throw new RuntimeException(
+                            "Sorry, '" + product.getName() + "' is no longer available in the " +
+                            "requested quantity. Your order has not been placed. Please try again.");
+                }
+
+                // Safe to deduct — we hold the lock and sufficiency is confirmed
+                product.setStockQuantity(product.getStockQuantity() - item.getQuantity());
+
+                if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) {
+                    lowStockProducts.add(product);
+                }
+                productRepo.save(product);
+            }
+
+            order.advanceStateTo(OrderStatus.PENDING_WAREHOUSE);
+            orderRepo.save(order);
+            
+            // Prevent LazyInitializationException outside the transaction boundary
+            order.getCustomer().getWhatsappNumber();
+
+            return new CheckoutResult(order, lowStockProducts);
+        });
+
+        if (result == null) {
+            return;
+        }
+
+        // Network calls safely execute OUTSIDE the database transaction
+        for (Product product : result.lowStockProducts) {
+            warehouseAlertService.sendLowStockAlert(product);
+        }
+        warehouseAlertService.sendNewOrderAlert(result.order);
     }
 
     @Transactional
@@ -186,6 +246,7 @@ public class OrderService {
                 .orElseThrow(() -> new EntityNotFoundException("Order not found"));
 
         order.advanceStateTo(OrderStatus.DELIVERED);
+        order.setDeliveredAt(LocalDateTime.now());
         orderRepo.save(order);
 
         // FIX 4: Use customer.getRecipientId() for delivery alerts

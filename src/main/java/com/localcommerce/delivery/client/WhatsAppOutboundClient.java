@@ -142,15 +142,13 @@ public class WhatsAppOutboundClient {
         // Calculate the grand total to display
         java.math.BigDecimal grandTotal = order.getTotalAmount();
 
+        String itemList = order.getItems().stream()
+                .map(item -> "▪️ " + item.getQuantity() + "x " + item.getProduct().getName())
+                .collect(java.util.stream.Collectors.joining("\n"));
+
         String bodyText = String.format(
-                """
-                        🛒 *Order Summary*
-                        
-                        -------------------
-                        💰 *Grand Total: ₹%s*
-                        
-                        Tap below to confirm your order and send it to our local store for packing!""",
-                grandTotal.toString()
+                WhatsAppConstants.ORDER_SUMMARY,
+                itemList, order.getTotalAmount().toString()
         );
 
         Map<String, Object> body = Map.of(

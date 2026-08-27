@@ -20,6 +20,7 @@ import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -52,8 +53,10 @@ public class CustomerOrder {
     // CREATED -> ACCEPTED -> PACKING -> READY -> DISPATCHED -> DELIVERED (or CANCELLED)
 
     private BigDecimal totalAmount;
-    private BigDecimal deliveryFee;
+//    private BigDecimal deliveryFee;
 
+    @CreationTimestamp
+    @Column(updatable = false)
     private LocalDateTime createdAt;
     private LocalDateTime readyAt; // To track warehouse packing speed
     private LocalDateTime deliveredAt; // To track rider delivery speed
@@ -69,12 +72,12 @@ public class CustomerOrder {
 
     public void advanceStateTo(OrderStatus targetState) {
         boolean isValid = switch (targetState) {
-            case ACCEPTED -> this.status == OrderStatus.CREATED;
-            case PACKING -> this.status == OrderStatus.ACCEPTED;
+            case PENDING_WAREHOUSE -> this.status == OrderStatus.CREATED;
+            case PACKING -> this.status == OrderStatus.PENDING_WAREHOUSE;
             case READY -> this.status == OrderStatus.PACKING;
             case DISPATCHED -> this.status == OrderStatus.READY;
             case DELIVERED -> this.status == OrderStatus.DISPATCHED;
-            case CANCELLED -> this.status == OrderStatus.CREATED || this.status == OrderStatus.ACCEPTED || this.status == OrderStatus.PACKING;
+            case CANCELLED -> this.status == OrderStatus.CREATED || this.status == OrderStatus.PENDING_WAREHOUSE || this.status == OrderStatus.PACKING;
             default -> false;
         };
 
