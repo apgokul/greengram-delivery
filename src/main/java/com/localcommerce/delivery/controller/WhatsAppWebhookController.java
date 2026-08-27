@@ -12,7 +12,10 @@ import com.localcommerce.delivery.service.BatchingService;
 import com.localcommerce.delivery.service.OrderService;
 import com.localcommerce.delivery.service.WarehouseService;
 import com.localcommerce.delivery.utils.UserContext;
+import com.localcommerce.delivery.utils.WebhookSignatureVerifier;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -29,6 +32,12 @@ public class WhatsAppWebhookController {
     @Value("${whatsapp.verify.token}")
     private String verifyToken;
 
+    @Value("${whatsapp.app.secret}")
+    private String appSecret;
+
+    @Value("${whatsapp.signature.verification.enabled:true}")
+    private boolean signatureVerificationEnabled;
+
     @Value("#{'${authorized.rider.numbers}'.split(',')}")
     private List<String> authorizedRiders;
 
@@ -37,6 +46,8 @@ public class WhatsAppWebhookController {
     private final WarehouseService warehouseService;
     private final BatchingService batchingService;
     private final ProductRepository productRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService, ProductRepository productRepository) {
         this.orderService = orderService;
@@ -60,9 +71,21 @@ public class WhatsAppWebhookController {
     }
 
     @PostMapping("/whatsapp")
-    public ResponseEntity<Void> receiveMessage(@RequestBody WhatsAppWebhookPayload payload) {
+    public ResponseEntity<Void> receiveMessage(
+            @RequestBody String rawBody,
+            @RequestHeader(value = "X-Hub-Signature-256", required = false) String signature) {
+
+        // Item 2: Verify X-Hub-Signature-256 before processing any payload.
+        // Returns 403 for non-Meta requests — 200 OK is only for verified, processed events.
+        if (signatureVerificationEnabled
+                && !WebhookSignatureVerifier.isValid(rawBody, signature, appSecret)) {
+            log.warn("SECURITY: Rejected webhook POST — invalid or missing X-Hub-Signature-256.");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         try {
+            WhatsAppWebhookPayload payload = objectMapper.readValue(rawBody, WhatsAppWebhookPayload.class);
+
             if (payload.getEntry() != null &&
                     !payload.getEntry().isEmpty() &&
                     payload.getEntry().getFirst().getChanges() != null &&
@@ -70,7 +93,12 @@ public class WhatsAppWebhookController {
                     payload.getEntry().getFirst().getChanges().getFirst().getValue() != null) {
 
                 var value = payload.getEntry().getFirst().getChanges().getFirst().getValue();
+
+                // Item 3 fix: messages and statuses are now independent sibling branches.
+                // Previously, the statuses branch was nested inside the messages block,
+                // making it unreachable for status-only webhook events.
                 if (value.getMessages() != null && !value.getMessages().isEmpty()) {
+                    // Branch A: inbound customer messages (orders, texts, locations, button taps)
                     WhatsAppWebhookPayload.Message message = value.getMessages().getFirst();
 
                     // 1. Extract Phone Number
@@ -95,107 +123,106 @@ public class WhatsAppWebhookController {
                     UserContext.setSenderId(primaryCustomerKey);
 
                     String messageType = message.getType();
-                    if (value.getMessages() != null && !value.getMessages().isEmpty()) {
-                        if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
-                            List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
-                            List<CartItemDTO> internalCart = metaItems.stream()
-                                    .map(item -> new CartItemDTO(
-                                            item.getProductRetailerId(),
-                                            Integer.parseInt(item.getQuantity())
+                    if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
+                        List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
+                        List<CartItemDTO> internalCart = metaItems.stream()
+                                .map(item -> new CartItemDTO(
+                                        item.getProductRetailerId(),
+                                        Integer.parseInt(item.getQuantity())
+                                ))
+                                .toList();
+
+                        OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
+
+                        // 2. Handle the outbound messaging based on the result!
+                        if (!result.isSuccess()) {
+                            // Stock failed. Send the exact error message back to the customer.
+                            outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
+                        } else {
+                            // Success! Get the saved order and customer
+                            CustomerOrder savedOrder = result.getOrder();
+                            Customer customer = savedOrder.getCustomer();
+
+                            // Check if we already have their location on file
+                            if (customer.getLatitude() != null && customer.getLongitude() != null) {
+                                outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId());
+                            } else {
+                                outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
+                            }
+                        }
+                    } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
+                        String command = message.getText().getBody().trim().toUpperCase();
+
+                        if ("DISPATCH".equals(command)) {
+                            if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
+                                batchingService.createManualBatchRun(phoneNumber);
+                            } else {
+                                log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
+                                outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
+                            }
+                        } else {
+                            // Fetch all products from DB
+                            List<Product> allProducts = productRepository.findAll();
+
+                            // Extract SKUs only for items that actually have inventory
+                            List<String> availableSkus = allProducts.stream()
+                                    .filter(Product::isActive)
+                                    .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
+                                    .collect(java.util.stream.Collectors.groupingBy(
+                                            p -> p.getSku().split("_")[0]
                                     ))
+                                    .values().stream()
+                                    .map(groupedVariants -> groupedVariants.getFirst().getSku())
                                     .toList();
 
-
-                            OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
-
-                            // 2. Handle the outbound messaging based on the result!
-                            if (!result.isSuccess()) {
-                                // Stock failed. Send the exact error message back to the customer.
-                                outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
+                            // Send the dynamic catalog
+                            if (!availableSkus.isEmpty()) {
+                                outboundClient.sendCatalogMessage(phoneNumber, availableSkus);
                             } else {
-                                // Success! Get the saved order and customer
-                                CustomerOrder savedOrder = result.getOrder();
-                                Customer customer = savedOrder.getCustomer();
-
-                                // Check if we already have their location on file
-                                if (customer.getLatitude() != null && customer.getLongitude() != null) {
-                                    outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId());
-                                } else {
-                                    outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
-                                }
-                            }
-                        } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
-                            String command = message.getText().getBody().trim().toUpperCase();
-
-                            if ("DISPATCH".equals(command)) {
-                                if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
-                                    batchingService.createManualBatchRun(phoneNumber);
-                                } else {
-                                    log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
-                                    outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
-                                }
-                            } else {
-
-                                // 2. Fetch all products from your DB
-                                List<Product> allProducts = productRepository.findAll();
-
-                                // 3. Extract SKUs only for items that actually have inventory!
-                                List<String> availableSkus = allProducts.stream()
-                                        .filter(Product::isActive)
-                                        .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
-                                        .collect(java.util.stream.Collectors.groupingBy(
-                                                p -> p.getSku().split("_")[0]
-                                        ))
-                                        .values().stream()
-                                        .map(groupedVariants -> groupedVariants.getFirst().getSku())
-                                        .toList();
-
-                                // 4. Send the dynamic catalog!
-                                if (!availableSkus.isEmpty()) {
-                                    outboundClient.sendCatalogMessage(phoneNumber, availableSkus);
-                                } else {
-                                    outboundClient.sendTextUpdate(phoneNumber, "We are currently completely sold out! Please check back later.");
-                                }
-                            }
-                        } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
-                            Double lat = message.getLocation().getLatitude();
-                            Double lng = message.getLocation().getLongitude();
-                            orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
-                        } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
-                            String buttonId = message.getInteractive().getButton_reply().getId();
-
-                            if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
-                                orderService.confirmSavedLocation(orderId);
-                            } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
-                                outboundClient.sendLocationRequestPrompt(phoneNumber);
-                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
-                                orderService.finalizeOrderCheckout(orderId);
-
-                                // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
-                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
-                            } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
-                                    buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
-                                    buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
-
-                                warehouseService.processButtonTap(phoneNumber, buttonId);
-                            } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
-                                orderService.completeDelivery(orderId);
+                                outboundClient.sendTextUpdate(phoneNumber, "We are currently completely sold out! Please check back later.");
                             }
                         }
-                    } else if (value.getStatuses() != null && !value.getStatuses().isEmpty()) {
-                        WhatsAppWebhookPayload.Status status = value.getStatuses().getFirst();
+                    } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
+                        Double lat = message.getLocation().getLatitude();
+                        Double lng = message.getLocation().getLongitude();
+                        orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
+                    } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
+                        String buttonId = message.getInteractive().getButton_reply().getId();
 
-                        if ("failed".equals(status.getStatus()) && status.getErrors() != null) {
-                            WhatsAppWebhookPayload.Error error = status.getErrors().getFirst();
+                        if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
+                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
+                            orderService.confirmSavedLocation(orderId);
+                        } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
+                            outboundClient.sendLocationRequestPrompt(phoneNumber);
+                        } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
+                            orderService.finalizeOrderCheckout(orderId);
 
-                            log.error("🚨 WHATSAPP SEND FAILED! Recipient: {}, Code: {}, Reason: {}",
-                                    status.getRecipient_id(),
-                                    error.getCode(),
-                                    error.getMessage());
+                            // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
+                            outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                        } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
+                                buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
+                                buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
+
+                            warehouseService.processButtonTap(phoneNumber, buttonId);
+                        } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
+                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
+                            orderService.completeDelivery(orderId);
                         }
+                    }
+
+                } else if (value.getStatuses() != null && !value.getStatuses().isEmpty()) {
+                    // Branch B: delivery status updates from Meta (send failures, read receipts, etc.)
+                    // Item 3 fix: this branch was previously nested inside Branch A and was
+                    // unreachable for status-only events where messages == null.
+                    WhatsAppWebhookPayload.Status status = value.getStatuses().getFirst();
+
+                    if ("failed".equals(status.getStatus()) && status.getErrors() != null) {
+                        WhatsAppWebhookPayload.Error error = status.getErrors().getFirst();
+                        log.error("WHATSAPP SEND FAILED — Recipient: {}, Code: {}, Reason: {}",
+                                status.getRecipient_id(),
+                                error.getCode(),
+                                error.getMessage());
                     }
                 }
             }
