@@ -7,6 +7,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -29,6 +31,11 @@ public class Product {
 
     @Column(nullable = false)
     private Integer stockQuantity;
+
+    private BigDecimal quantity;
+
+    @Enumerated(EnumType.STRING)
+    private ProductUnit unit;
 
     // NEW: The magic bullet for concurrency. Spring manages this automatically.
     @Version
