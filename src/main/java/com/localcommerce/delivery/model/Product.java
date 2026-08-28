@@ -44,4 +44,12 @@ public class Product {
     // Crucial for the "Out of Stock" logic
 //    private Integer availableStock;
     private boolean isActive;
+
+    public String getDisplayName() {
+        if (quantity != null && unit != null) {
+            String unitStr = unit.name().equals("L") ? "L" : unit.name().toLowerCase();
+            return name + " — " + quantity.stripTrailingZeros().toPlainString() + " " + unitStr;
+        }
+        return name;
+    }
 }

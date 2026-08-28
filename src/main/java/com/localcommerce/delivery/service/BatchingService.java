@@ -49,6 +49,9 @@ public class BatchingService {
 
         run = deliveryRepo.save(run);
 
+        // Send the manifest first so it appears at the top of the chat
+        sendManifestToRider(run, readyOrders);
+
         // 3. Attach orders to the run
         for (CustomerOrder order : readyOrders) {
             order.setDeliveryRun(run);
@@ -66,7 +69,6 @@ public class BatchingService {
             // Send the digital manifest card to the rider for this specific order
             outboundClient.sendRiderDeliveryCard(riderPhoneNumber, order);
         }
-        sendManifestToRider(run, readyOrders);
     }
 
     // Inside com.localcommerce.delivery.service.BatchingService

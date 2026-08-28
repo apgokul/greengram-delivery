@@ -40,14 +40,14 @@ public class WarehouseAlertService {
         // 1. Format the items into a clean list for the packer to read
         // Example output: "1x Ashirvad Atta (5kg)\n2x Tata Salt"
         String itemsText = order.getItems().stream()
-                .map(item -> item.getQuantity() + "x " + item.getProduct().getName())
+                .map(item -> item.getQuantity() + "x " + item.getProduct().getDisplayName())
                 .collect(Collectors.joining("\n"));
 
         // 2. Build the WhatsApp message body
         String messageBody = String.format(
                 WhatsAppConstants.WAREHOUSE_NEW_ORDER_ALERT_TEMPLATE,
                 order.getDisplayId(),
-                order.getCustomer().getWhatsappNumber(),
+                order.getCustomer().getName() + " (" + order.getCustomer().getWhatsappNumber() + ")",
                 itemsText
         );
 
@@ -106,7 +106,7 @@ public class WarehouseAlertService {
     public void sendLowStockAlert(Product product) {
         String alertMessage = String.format(
                 WhatsAppConstants.LOW_STOCK_ALERT,
-                product.getName(), product.getSku(), product.getStockQuantity()
+                product.getDisplayName(), product.getSku(), product.getStockQuantity()
         );
 
         // Send this directly to the warehouse phone number
