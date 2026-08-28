@@ -40,14 +40,28 @@ body {
 }
 
 /* Typography */
-h1, h2, h3, h4, h5, h6 {
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.025em;
 }
 
-h1 { font-size: 2.25rem; line-height: 2.5rem; margin-bottom: 1.5rem; }
-h2 { font-size: 1.5rem; line-height: 2rem; margin-bottom: 1rem; }
+h1 {
+  font-size: 2.25rem;
+  line-height: 2.5rem;
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  margin-bottom: 1rem;
+}
 
 /* Buttons */
 .btn {
@@ -266,17 +280,31 @@ h2 { font-size: 1.5rem; line-height: 2rem; margin-bottom: 1rem; }
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes slideUp {
-  from { transform: translateY(10px) scale(0.98); opacity: 0; }
-  to { transform: translateY(0) scale(1); opacity: 1; }
+  from {
+    transform: translateY(10px) scale(0.98);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .spinner {
@@ -307,7 +335,7 @@ h2 { font-size: 1.5rem; line-height: 2rem; margin-bottom: 1rem; }
 .brand {
   font-size: 1.25rem;
   font-weight: 700;
-  background: white;
+  background: linear-gradient(to right, #ffffff, #44a349);
   -webkit-background-clip: text;
   color: transparent;
 }
