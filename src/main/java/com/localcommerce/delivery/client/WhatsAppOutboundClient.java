@@ -143,7 +143,7 @@ public class WhatsAppOutboundClient {
         java.math.BigDecimal grandTotal = order.getTotalAmount();
 
         String itemList = order.getItems().stream()
-                .map(item -> "▪️ " + item.getQuantity() + "x " + item.getProduct().getName())
+                .map(item -> "▪️ " + item.getQuantity() + "x " + item.getProduct().getDisplayName())
                 .collect(java.util.stream.Collectors.joining("\n"));
 
         String bodyText = String.format(
@@ -257,11 +257,17 @@ public class WhatsAppOutboundClient {
                         📦 *ORDER DISPATCH*
                         
                         • *ID:* %s
+                        • *Customer:* %s
+                        • *Phone:* %s
                         • *Collect Cash:* ₹%s
                         • *Address:* %s
                         
                         Tap below ONLY when you have handed this bag to the customer.""",
-                order.getDisplayId(), totalAmount, googleMapsLink
+                order.getDisplayId(), 
+                order.getCustomer().getName(),
+                order.getCustomer().getWhatsappNumber(),
+                totalAmount, 
+                googleMapsLink
         );
 
         Map<String, Object> body = Map.of(
