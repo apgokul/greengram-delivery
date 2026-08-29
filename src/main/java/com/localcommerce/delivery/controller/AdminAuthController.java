@@ -28,11 +28,6 @@ public class AdminAuthController {
     @Value("${admin.password.hash}")
     private String adminPasswordHash;
 
-    @org.springframework.web.bind.annotation.GetMapping("/debug")
-    public ResponseEntity<?> debug() {
-        return ResponseEntity.ok(Map.of("username", adminUsername, "hash", adminPasswordHash));
-    }
-
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
         if (adminUsername.equals(request.getUsername()) &&

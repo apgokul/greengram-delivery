@@ -18,7 +18,11 @@ import org.springframework.test.context.TestPropertySource;
         "WAREHOUSE_PHONE_NUMBER=123",
         "FALLBACK_MANAGER_PHONE=123",
         "AUTHORIZED_RIDER_NUMBERS=123",
-        "ADMIN_API_KEY=dummy"
+        "ADMIN_API_KEY=dummy",
+        "ADMIN_USERNAME=dummy",
+        "ADMIN_PASSWORD_HASH=dummy",
+        "JWT_SECRET=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+        "JWT_EXPIRATION_MS=10000"
 })
 class DeliveryEngineApplicationTests {
 
