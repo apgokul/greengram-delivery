@@ -1,0 +1,6 @@
+[build]
+builder = "NIXPACKS"
+buildCommand = "./mvnw -DoutputFile=target/mvn-dependency-list.log -B -DskipTests clean dependency:list install"
+
+[build.env]
+NIXPACKS_JDK_VERSION = "25"
