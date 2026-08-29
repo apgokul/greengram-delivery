@@ -21,6 +21,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 @SpringBootTest(properties = {
         "admin.username=testadmin",
+        "admin.api.key=testkey",
         "admin.password.hash=${ADMIN_TEST_HASH}",
         "jwt.secret=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
         "jwt.expiration.ms=3600000",
@@ -58,14 +59,6 @@ public class AdminSecurityIntegrationTest {
                 .webAppContextSetup(context)
                 .apply(springSecurity())
                 .build();
-    }
-
-    @Test
-    public void testDebugEndpoint() throws Exception {
-        String response = mockMvc.perform(get("/api/admin/auth/debug"))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString();
-        System.out.println("DEBUG ENDPOINT RESPONSE: " + response);
     }
 
     @Test

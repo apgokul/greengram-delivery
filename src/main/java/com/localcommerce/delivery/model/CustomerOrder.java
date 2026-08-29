@@ -38,7 +38,7 @@ public class CustomerOrder {
 
     @Id
     @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "order_seq")
-    @SequenceGenerator(name = "order_seq", sequenceName = "order_sequence", initialValue = 1000, allocationSize = 1)
+    @SequenceGenerator(name = "order_seq", sequenceName = "order_sequence", initialValue = 1001, allocationSize = 1)
     private Long id;
 
     @Column(unique = true, nullable = false)

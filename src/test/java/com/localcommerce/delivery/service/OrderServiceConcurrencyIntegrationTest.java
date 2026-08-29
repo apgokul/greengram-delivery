@@ -42,6 +42,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
         "fallback.manager.phone=test",
         "authorized.rider.numbers=test",
         "admin.api.key=test",
+        "admin.username=testadmin",
+        "ADMIN_PASSWORD_HASH=dummy",
+        "JWT_SECRET=MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTA=",
+        "JWT_EXPIRATION_MS=10000",
         "spring.flyway.enabled=false"
 })
 class OrderServiceConcurrencyIntegrationTest {
