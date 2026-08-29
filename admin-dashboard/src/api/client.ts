@@ -1,12 +1,13 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
-const API_KEY = import.meta.env.VITE_ADMIN_API_KEY || '';
+
 
 export const apiClient = {
     async get<T>(path: string): Promise<T> {
+        const token = sessionStorage.getItem('adminToken');
         const response = await fetch(`${BASE_URL}${path}`, {
             method: 'GET',
             headers: {
-                'X-Admin-API-Key': API_KEY,
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
         });
@@ -14,10 +15,11 @@ export const apiClient = {
     },
 
     async post<T>(path: string, body: any): Promise<T> {
+        const token = sessionStorage.getItem('adminToken');
         const response = await fetch(`${BASE_URL}${path}`, {
             method: 'POST',
             headers: {
-                'X-Admin-API-Key': API_KEY,
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
@@ -26,10 +28,11 @@ export const apiClient = {
     },
 
     async patch<T>(path: string): Promise<T> {
+        const token = sessionStorage.getItem('adminToken');
         const response = await fetch(`${BASE_URL}${path}`, {
             method: 'PATCH',
             headers: {
-                'X-Admin-API-Key': API_KEY,
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
         });
@@ -39,6 +42,10 @@ export const apiClient = {
 
 async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+            sessionStorage.removeItem('adminToken');
+            window.location.reload(); // Quick way to force App.tsx to rerender login
+        }
         let errorMessage = `HTTP Error ${response.status}`;
         try {
             const errorData = await response.json();

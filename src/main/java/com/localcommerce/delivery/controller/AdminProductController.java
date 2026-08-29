@@ -17,30 +17,16 @@ public class AdminProductController {
 
     private final ProductAdminService adminService;
 
-    // Pulls the secret key from your application.properties
-    @Value("${admin.api.key}")
-    private String validApiKey;
 
-    // Helper method to validate the request
-    private boolean isUnauthorized(String apiKey) {
-        return apiKey == null || !apiKey.equals(validApiKey);
-    }
 
     @PatchMapping("/{sku}/stock")
     public ResponseEntity<?> adjustStock(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam int adjustmentAmount,
             @RequestParam String reason) {
 
-        // 1. Security Check
-        if (isUnauthorized(apiKey)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(Map.of("error", "Unauthorized: Invalid or missing API Key"));
-        }
-
-        // 2. Execute Business Logic
+        // Execute Business Logic
         try {
             Product updatedProduct = adminService.adjustStock(sku, adjustmentAmount, reason, adminUser);
 
@@ -63,14 +49,8 @@ public class AdminProductController {
     // --- 1. CREATE A NEW PRODUCT ---
     @PostMapping
     public ResponseEntity<?> createProduct(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @RequestBody Product product) {
-
-        if (isUnauthorized(apiKey)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
-        }
 
         try {
             Product createdProduct = adminService.createNewProduct(product, adminUser);
@@ -84,15 +64,9 @@ public class AdminProductController {
     // --- 2. CHANGE PRODUCT PRICE ---
     @PatchMapping("/{sku}/price")
     public ResponseEntity<?> updatePrice(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam java.math.BigDecimal newPrice) {
-
-        if (isUnauthorized(apiKey)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
-        }
 
         try {
             Product updatedProduct = adminService.updatePrice(sku, newPrice, adminUser);
@@ -113,15 +87,9 @@ public class AdminProductController {
     // Toggle active Status
     @PatchMapping("/{sku}/toggle-active")
     public ResponseEntity<?> toggleActiveStatus(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
             @PathVariable String sku,
             @RequestParam boolean isActive) {
-
-        if (isUnauthorized(apiKey)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(java.util.Map.of("error", "Unauthorized: Invalid or missing API Key"));
-        }
 
         try {
             Product updatedProduct = adminService.toggleActiveStatus(sku, isActive, adminUser);
@@ -140,13 +108,7 @@ public class AdminProductController {
 
     @GetMapping
     public ResponseEntity<?> getAllProducts(
-            @RequestHeader(value = "X-Admin-API-Key", required = false) String apiKey,
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
-
-        if (isUnauthorized(apiKey)) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(java.util.Map.of("error", "Unauthorized"));
-        }
 
         // Assuming you have a standard findAll() in your ProductRepository
         return ResponseEntity.ok(adminService.getAllProducts());
