@@ -10,7 +10,9 @@ import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
+import com.localcommerce.delivery.repository.DeliveryRunRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
@@ -37,6 +39,7 @@ public class OrderService {
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseAlertService warehouseAlertService;
     private final CustomerIdentityService customerIdentityService;
+    private final DeliveryRunRepository deliveryRepo;
     private final TransactionTemplate transactionTemplate;
 
     @Value("${store.latitude}")
@@ -54,6 +57,7 @@ public class OrderService {
                         WhatsAppOutboundClient outboundClient,
                         WarehouseAlertService warehouseAlertService,
                         CustomerIdentityService customerIdentityService,
+                        DeliveryRunRepository deliveryRepo,
                         PlatformTransactionManager transactionManager) {
         this.customerRepo = customerRepo;
         this.productRepo = productRepo;
@@ -61,6 +65,7 @@ public class OrderService {
         this.outboundClient = outboundClient;
         this.warehouseAlertService = warehouseAlertService;
         this.customerIdentityService = customerIdentityService;
+        this.deliveryRepo = deliveryRepo;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -274,6 +279,21 @@ public class OrderService {
         order.advanceStateTo(OrderStatus.DELIVERED);
         order.setDeliveredAt(LocalDateTime.now());
         orderRepo.save(order);
+
+        DeliveryRun run = order.getDeliveryRun();
+        if (run != null) {
+            boolean hasUndeliveredOrders = orderRepo.existsByDeliveryRunIdAndStatusNot(
+                    run.getId(), OrderStatus.DELIVERED
+            );
+
+            if (!hasUndeliveredOrders) {
+                run.setStatus(DeliveryRun.RunStatus.COMPLETED);
+                deliveryRepo.save(run);
+                log.info("Delivery run {} has been completed. All orders are delivered.", run.getId());
+            } else {
+                log.info("Delivery run {} remains IN_PROGRESS after order {} was delivered", run.getId(), order.getId());
+            }
+        }
 
         // FIX 4: Use customer.getRecipientId() for delivery alerts
         outboundClient.sendDeliveredAlert(order.getCustomer().getRecipientId());

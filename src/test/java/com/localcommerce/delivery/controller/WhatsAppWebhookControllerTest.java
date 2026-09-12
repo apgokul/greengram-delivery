@@ -62,6 +62,7 @@ class WhatsAppWebhookControllerTest {
         ReflectionTestUtils.setField(controller, "appSecret", appSecret);
         ReflectionTestUtils.setField(controller, "signatureVerificationEnabled", true);
         ReflectionTestUtils.setField(controller, "authorizedRiders", List.of("919999999999"));
+        ReflectionTestUtils.setField(controller, "warehousePhoneNumber", "918888888888");
         
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }

@@ -43,7 +43,7 @@ public class BatchingService {
 
         // 2. Create the Delivery Run
         DeliveryRun run = new DeliveryRun();
-        run.setStatus(DeliveryRun.RunStatus.PENDING);
+        run.setStatus(DeliveryRun.RunStatus.IN_PROGRESS);
         run.setDispatchedAt(LocalDateTime.now());
         run.setRiderPhoneNumber(riderPhoneNumber);
 
