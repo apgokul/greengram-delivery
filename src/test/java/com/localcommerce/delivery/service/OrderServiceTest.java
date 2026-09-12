@@ -61,6 +61,7 @@ class OrderServiceTest {
         product.setSku("SKU_123");
         product.setName("Test Product");
         product.setStockQuantity(10); // initial stock 10
+        product.setActive(true); // Default to active
 
         item = new OrderItem();
         item.setProduct(product);
@@ -105,11 +106,11 @@ class OrderServiceTest {
         when(orderRepo.findById(100L)).thenReturn(Optional.of(order));
         when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
 
-        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+        com.localcommerce.delivery.exception.OrderValidationException exception = assertThrows(com.localcommerce.delivery.exception.OrderValidationException.class, () -> {
             orderService.finalizeOrderCheckout(100L);
         });
 
-        assertTrue(exception.getMessage().contains("no longer available in the requested quantity"));
+        assertTrue(exception.getMessage().contains("unavailable in the requested quantity"));
         
         // Verify NO stock was deducted (still 1)
         assertEquals(1, product.getStockQuantity());
@@ -121,6 +122,109 @@ class OrderServiceTest {
         assertEquals(OrderStatus.CREATED, order.getStatus());
         verify(orderRepo, never()).save(any());
         verify(warehouseAlertService, never()).sendNewOrderAlert(any());
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_InactiveProduct_ThrowsException() {
+        product.setActive(false);
+
+        when(orderRepo.findById(100L)).thenReturn(Optional.of(order));
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
+
+        com.localcommerce.delivery.exception.OrderValidationException exception = assertThrows(com.localcommerce.delivery.exception.OrderValidationException.class, () -> {
+            orderService.finalizeOrderCheckout(100L);
+        });
+
+        assertTrue(exception.getMessage().contains("is currently out of stock"));
+        verify(productRepo, never()).save(any());
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_MissingProduct_ThrowsException() {
+        when(orderRepo.findById(100L)).thenReturn(Optional.of(order));
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.empty());
+
+        com.localcommerce.delivery.exception.OrderValidationException exception = assertThrows(com.localcommerce.delivery.exception.OrderValidationException.class, () -> {
+            orderService.finalizeOrderCheckout(100L);
+        });
+
+        assertTrue(exception.getMessage().contains("no longer available"));
+        verify(productRepo, never()).save(any());
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testProcessNewCart_MissingSku() {
+        com.localcommerce.delivery.dto.CartItemDTO cartItem = new com.localcommerce.delivery.dto.CartItemDTO("SKU_MISSING", 1);
+        when(productRepo.findBySkuForUpdate("SKU_MISSING")).thenReturn(Optional.empty());
+
+        com.localcommerce.delivery.dto.OrderProcessing.OrderProcessResult result = orderService.processNewCart("bsuid", "123", "Name", java.util.List.of(cartItem));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("currently unavailable"));
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testProcessNewCart_InactiveProduct() {
+        product.setActive(false);
+        com.localcommerce.delivery.dto.CartItemDTO cartItem = new com.localcommerce.delivery.dto.CartItemDTO("SKU_123", 1);
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
+
+        com.localcommerce.delivery.dto.OrderProcessing.OrderProcessResult result = orderService.processNewCart("bsuid", "123", "Name", java.util.List.of(cartItem));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("out of stock"));
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testProcessNewCart_ZeroStockProduct() {
+        product.setStockQuantity(0);
+        com.localcommerce.delivery.dto.CartItemDTO cartItem = new com.localcommerce.delivery.dto.CartItemDTO("SKU_123", 1);
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
+
+        com.localcommerce.delivery.dto.OrderProcessing.OrderProcessResult result = orderService.processNewCart("bsuid", "123", "Name", java.util.List.of(cartItem));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("out of stock"));
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testProcessNewCart_QuantityExceedsStock() {
+        product.setStockQuantity(5);
+        com.localcommerce.delivery.dto.CartItemDTO cartItem = new com.localcommerce.delivery.dto.CartItemDTO("SKU_123", 6);
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
+
+        com.localcommerce.delivery.dto.OrderProcessing.OrderProcessResult result = orderService.processNewCart("bsuid", "123", "Name", java.util.List.of(cartItem));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("unavailable in the requested quantity"));
+        verify(orderRepo, never()).save(any());
+    }
+
+    @Test
+    void testProcessNewCart_MultipleItemsAtomicRejection() {
+        Product product2 = new Product();
+        product2.setId(2L);
+        product2.setSku("SKU_456");
+        product2.setActive(true);
+        product2.setStockQuantity(0); // Failing product
+
+        com.localcommerce.delivery.dto.CartItemDTO cartItem1 = new com.localcommerce.delivery.dto.CartItemDTO("SKU_123", 1);
+        com.localcommerce.delivery.dto.CartItemDTO cartItem2 = new com.localcommerce.delivery.dto.CartItemDTO("SKU_456", 1);
+
+        when(productRepo.findBySkuForUpdate("SKU_123")).thenReturn(Optional.of(product));
+        when(productRepo.findBySkuForUpdate("SKU_456")).thenReturn(Optional.of(product2));
+
+        com.localcommerce.delivery.dto.OrderProcessing.OrderProcessResult result = orderService.processNewCart("bsuid", "123", "Name", java.util.List.of(cartItem1, cartItem2));
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("out of stock"));
+        // Make sure no order was created even though SKU_123 was valid
+        verify(orderRepo, never()).save(any());
     }
 
     @Test

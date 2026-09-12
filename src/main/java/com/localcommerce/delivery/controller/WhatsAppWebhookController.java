@@ -199,10 +199,14 @@ public class WhatsAppWebhookController {
                                 outboundClient.sendLocationRequestPrompt(phoneNumber);
                             } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
                                 Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
-                                orderService.finalizeOrderCheckout(orderId);
-
-                                // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
-                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                                try {
+                                    orderService.finalizeOrderCheckout(orderId);
+                                    // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
+                                    outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                                } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
+                                    log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
+                                    outboundClient.sendTextUpdate(phoneNumber, e.getMessage());
+                                }
                             } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
                                     buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
                                     buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
