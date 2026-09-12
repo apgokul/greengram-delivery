@@ -41,6 +41,9 @@ public class WhatsAppWebhookController {
     @Value("#{'${authorized.rider.numbers}'.split(',')}")
     private List<String> authorizedRiders;
 
+    @Value("${warehouse.phone.number}")
+    private String warehousePhoneNumber;
+
     private final OrderService orderService;
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseService warehouseService;
@@ -151,6 +154,11 @@ public class WhatsAppWebhookController {
                             }
                         }
                     } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
+                        if (phoneNumber != null && phoneNumber.equals(warehousePhoneNumber)) {
+                            warehouseService.sendPendingOrdersInbox(phoneNumber);
+                            return ResponseEntity.ok().build();
+                        }
+
                         String command = message.getText().getBody().trim().toUpperCase();
 
                         if ("DISPATCH".equals(command)) {
@@ -187,27 +195,34 @@ public class WhatsAppWebhookController {
                         Double lng = message.getLocation().getLongitude();
                         orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
                     } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
-                        String buttonId = message.getInteractive().getButton_reply().getId();
+                        if (message.getInteractive().getButton_reply() != null) {
+                            String buttonId = message.getInteractive().getButton_reply().getId();
 
-                        if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
-                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
-                            orderService.confirmSavedLocation(orderId);
-                        } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
-                            outboundClient.sendLocationRequestPrompt(phoneNumber);
-                        } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
-                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
-                            orderService.finalizeOrderCheckout(orderId);
+                            if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
+                                orderService.confirmSavedLocation(orderId);
+                            } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
+                                outboundClient.sendLocationRequestPrompt(phoneNumber);
+                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
+                                orderService.finalizeOrderCheckout(orderId);
 
-                            // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
-                            outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
-                        } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
-                                buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
-                                buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
+                                // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
+                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                            } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
+                                    buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
+                                    buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
 
-                            warehouseService.processButtonTap(phoneNumber, buttonId);
-                        } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
-                            Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
-                            orderService.completeDelivery(orderId);
+                                warehouseService.processButtonTap(phoneNumber, buttonId);
+                            } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
+                                orderService.completeDelivery(orderId);
+                            }
+                        } else if (message.getInteractive().getList_reply() != null) {
+                            String listId = message.getInteractive().getList_reply().getId();
+                            if (listId.startsWith(WhatsAppConstants.VIEW_ORDER)) {
+                                warehouseService.processListReply(phoneNumber, listId);
+                            }
                         }
                     }
 
