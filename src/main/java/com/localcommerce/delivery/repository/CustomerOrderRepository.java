@@ -31,4 +31,7 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, Lo
             Long customerId,
             OrderStatus status
     );
+
+    // Determines if a specific delivery run has any orders not in the specified status
+    boolean existsByDeliveryRunIdAndStatusNot(Long deliveryRunId, OrderStatus status);
 }

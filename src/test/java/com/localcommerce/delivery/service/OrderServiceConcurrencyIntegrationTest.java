@@ -76,6 +76,7 @@ class OrderServiceConcurrencyIntegrationTest {
         product.setSku("RACE_SKU_001");
         product.setName("Limited Item");
         product.setStockQuantity(1); // Crucial: Only 1 in stock
+        product.setActive(true);
         product = productRepository.save(product);
         productId = product.getId();
 

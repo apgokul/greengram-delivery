@@ -10,7 +10,9 @@ import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
+import com.localcommerce.delivery.repository.DeliveryRunRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
@@ -37,6 +39,7 @@ public class OrderService {
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseAlertService warehouseAlertService;
     private final CustomerIdentityService customerIdentityService;
+    private final DeliveryRunRepository deliveryRepo;
     private final TransactionTemplate transactionTemplate;
 
     @Value("${store.latitude}")
@@ -54,6 +57,7 @@ public class OrderService {
                         WhatsAppOutboundClient outboundClient,
                         WarehouseAlertService warehouseAlertService,
                         CustomerIdentityService customerIdentityService,
+                        DeliveryRunRepository deliveryRepo,
                         PlatformTransactionManager transactionManager) {
         this.customerRepo = customerRepo;
         this.productRepo = productRepo;
@@ -61,6 +65,7 @@ public class OrderService {
         this.outboundClient = outboundClient;
         this.warehouseAlertService = warehouseAlertService;
         this.customerIdentityService = customerIdentityService;
+        this.deliveryRepo = deliveryRepo;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
@@ -73,13 +78,29 @@ public class OrderService {
         // 2. PASS 1: Validate stock for ALL items FIRST using Pessimistic Locks
         // (Prevents deducting Item 1 if Item 2 fails stock check)
         for (CartItemDTO dto : cartItems) {
-            Product product = productRepo.findBySkuForUpdate(dto.getSku()) // 2. Locks the DB row
-                    .orElseThrow(() -> new RuntimeException("Product SKU not found: " + dto.getSku()));
+            if (dto.getQuantity() <= 0) {
+                return OrderProcessing.OrderProcessResult.failed("Sorry, invalid quantity requested.");
+            }
+
+            java.util.Optional<Product> optProduct = productRepo.findBySkuForUpdate(dto.getSku());
+
+            if (optProduct.isEmpty()) {
+                return OrderProcessing.OrderProcessResult.failed(
+                        "Sorry, one or more items in your cart are currently unavailable."
+                );
+            }
+
+            Product product = optProduct.get();
+
+            if (!product.isActive() || product.getStockQuantity() <= 0) {
+                return OrderProcessing.OrderProcessResult.failed(
+                        "Sorry, " + product.getName() + " is currently out of stock."
+                );
+            }
 
             if (product.getStockQuantity() < dto.getQuantity()) {
-
-                       return OrderProcessing.OrderProcessResult.failed(
-                               "⚠️ Sorry, we only have " + product.getStockQuantity() + " units of " + product.getName() + " left!"
+                return OrderProcessing.OrderProcessResult.failed(
+                        "Sorry, " + product.getName() + " is currently unavailable in the requested quantity. Please try a smaller quantity."
                 );
             }
         }
@@ -199,15 +220,25 @@ public class OrderService {
                 // Acquire a fresh pessimistic write lock on this product row.
                 // Blocks any concurrent finalizeOrderCheckout for the same product
                 // until this transaction commits or rolls back.
-                Product product = productRepo.findBySkuForUpdate(item.getProduct().getSku())
-                        .orElseThrow(() -> new RuntimeException(
-                                "Product missing during checkout: " + item.getProduct().getSku()));
+                java.util.Optional<Product> optProduct = productRepo.findBySkuForUpdate(item.getProduct().getSku());
+                
+                if (optProduct.isEmpty()) {
+                    throw new com.localcommerce.delivery.exception.OrderValidationException(
+                            "Sorry, one or more items in your cart are no longer available. Your order has not been placed. Please try again.");
+                }
+
+                Product product = optProduct.get();
+
+                if (!product.isActive() || product.getStockQuantity() <= 0) {
+                    throw new com.localcommerce.delivery.exception.OrderValidationException(
+                            "Sorry, " + product.getName() + " is currently out of stock. Your order has not been placed. Please try again.");
+                }
 
                 // Re-verify stock is still sufficient after acquiring the lock.
                 // This closes the race window between processNewCart and finalizeOrderCheckout.
                 if (product.getStockQuantity() < item.getQuantity()) {
-                    throw new RuntimeException(
-                            "Sorry, '" + product.getName() + "' is no longer available in the " +
+                    throw new com.localcommerce.delivery.exception.OrderValidationException(
+                            "Sorry, " + product.getName() + " is currently unavailable in the " +
                             "requested quantity. Your order has not been placed. Please try again.");
                 }
 
@@ -248,6 +279,21 @@ public class OrderService {
         order.advanceStateTo(OrderStatus.DELIVERED);
         order.setDeliveredAt(LocalDateTime.now());
         orderRepo.save(order);
+
+        DeliveryRun run = order.getDeliveryRun();
+        if (run != null) {
+            boolean hasUndeliveredOrders = orderRepo.existsByDeliveryRunIdAndStatusNot(
+                    run.getId(), OrderStatus.DELIVERED
+            );
+
+            if (!hasUndeliveredOrders) {
+                run.setStatus(DeliveryRun.RunStatus.COMPLETED);
+                deliveryRepo.save(run);
+                log.info("Delivery run {} has been completed. All orders are delivered.", run.getId());
+            } else {
+                log.info("Delivery run {} remains IN_PROGRESS after order {} was delivered", run.getId(), order.getId());
+            }
+        }
 
         // FIX 4: Use customer.getRecipientId() for delivery alerts
         outboundClient.sendDeliveredAlert(order.getCustomer().getRecipientId());

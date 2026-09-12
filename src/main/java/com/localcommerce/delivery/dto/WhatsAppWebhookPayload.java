@@ -100,12 +100,21 @@ public class WhatsAppWebhookPayload {
     @JsonIgnoreProperties(ignoreUnknown = true)
     public static class InteractivePayload {
         private ButtonReply button_reply;
+        private ListReply list_reply;
 
         @Data
         @JsonIgnoreProperties(ignoreUnknown = true)
         public static class ButtonReply {
             private String id; // e.g., "ACCEPT_1042"
             private String title;
+        }
+
+        @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
+        public static class ListReply {
+            private String id; // e.g., "VIEW_ORDER_1042"
+            private String title;
+            private String description;
         }
     }
 

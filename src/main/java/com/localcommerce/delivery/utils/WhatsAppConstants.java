@@ -16,6 +16,7 @@ public class WhatsAppConstants {
     public static final String READY_FOR_PICKUP = "READY_";
     public static final String STOCK_ISSUE = "STOCK_ISSUE_";
     public static final String SET_DELIVERED = "DELIVERED_";
+    public static final String VIEW_ORDER = "VIEW_ORDER_";
 
     // ==================== Payload Keys ====================
     // Messaging product type
@@ -26,6 +27,7 @@ public class WhatsAppConstants {
     public static final String MESSAGE_TYPE_INTERACTIVE = "interactive";
     public static final String MESSAGE_TYPE_TEXT = "text";
     public static final String MESSAGE_TYPE_BUTTON = "button";
+    public static final String MESSAGE_TYPE_LIST = "list";
     public static final String MESSAGE_TYPE_REPLY = "reply";
     public static final String MESSAGE_TYPE_ORDER = "order";
     public static final String MESSAGE_TYPE_LOCATION = "location";
@@ -41,6 +43,11 @@ public class WhatsAppConstants {
     public static final String REPLY = "reply";
     public static final String ID = "id";
     public static final String TITLE = "title";
+    public static final String HEADER = "header";
+    public static final String SECTIONS = "sections";
+    public static final String ROWS = "rows";
+    public static final String DESCRIPTION = "description";
+    public static final String BUTTON = "button";
 
     // Webhook parameter names
     public static final String HUB_MODE = "hub.mode";
@@ -57,7 +64,13 @@ public class WhatsAppConstants {
 
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =
-            "🛒 We have your cart!\n\nPlease tap the attachment pin 📎 and send us your 'Current Location' so we can route your delivery.";
+            "📍 *WHERE SHOULD WE DELIVER?*\n\n"
+                    + "Your cart is ready! 🛒\n\n"
+                    + "*Please send us your current location:*\n\n"
+                    + "📎 Tap the attachment icon\n"
+                    + "📍 Select *Location*\n"
+                    + "📤 Tap *Send your current location*\n\n"
+                    + "This helps us deliver your order to the correct address. ❤️";
 
     // Order status alerts
     public static final String ORDER_CONFIRMED_ALERT =
