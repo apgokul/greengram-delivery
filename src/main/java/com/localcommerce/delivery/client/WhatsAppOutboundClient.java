@@ -90,6 +90,51 @@ public class WhatsAppOutboundClient {
         sendPostRequest(body);
     }
 
+    public void sendPendingOrdersList(String toPhoneNumber, List<CustomerOrder> pendingOrders) {
+        // Meta API limits list rows to 10 per section. We will safely truncate to 10 for Phase 1.
+        int limit = Math.min(pendingOrders.size(), 10);
+        
+        List<Map<String, Object>> rows = new java.util.ArrayList<>();
+        for (int i = 0; i < limit; i++) {
+            CustomerOrder order = pendingOrders.get(i);
+            int itemCount = order.getItems().stream().mapToInt(com.localcommerce.delivery.model.OrderItem::getQuantity).sum();
+            String description = String.format("₹%s — %d items", order.getTotalAmount(), itemCount);
+            
+            rows.add(Map.of(
+                    WhatsAppConstants.ID, WhatsAppConstants.VIEW_ORDER + order.getId(),
+                    WhatsAppConstants.TITLE, "Order #" + order.getDisplayId(),
+                    WhatsAppConstants.DESCRIPTION, description
+            ));
+        }
+
+        String bodyText = String.format("📦 *Pending Warehouse Orders*\n\nYou have %d order(s) waiting for action.\nSelect an order below to view it.", pendingOrders.size());
+
+        Map<String, Object> body = Map.of(
+                WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                WhatsAppConstants.TO, toPhoneNumber,
+                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                WhatsAppConstants.INTERACTIVE, Map.of(
+                        WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_LIST,
+                        WhatsAppConstants.HEADER, Map.of(
+                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_TEXT,
+                                WhatsAppConstants.TEXT, "Pending Orders"
+                        ),
+                        WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                        WhatsAppConstants.ACTION, Map.of(
+                                WhatsAppConstants.BUTTON, "View Orders",
+                                WhatsAppConstants.SECTIONS, new Object[]{
+                                        Map.of(
+                                                WhatsAppConstants.TITLE, "Orders Awaiting Action",
+                                                WhatsAppConstants.ROWS, rows
+                                        )
+                                }
+                        )
+                )
+        );
+
+        sendPostRequest(body);
+    }
+
     // Helper method to execute the HTTP call
     @Retryable(
             retryFor = {RestClientException.class},

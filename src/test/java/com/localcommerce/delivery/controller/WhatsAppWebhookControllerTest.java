@@ -245,4 +245,132 @@ class WhatsAppWebhookControllerTest {
         verify(outboundClient, never()).sendCatalogMessage(any(), any());
         verify(outboundClient).sendTextUpdate(eq("919876543210"), eq("We are currently completely sold out! Please check back later."));
     }
+
+    @Test
+    void testWarehouseMessageTriggersInbox() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "918888888888"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "918888888888",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(warehouseService).sendPendingOrdersInbox("918888888888");
+    }
+
+    @Test
+    void testNonWarehouseMessageTriggersCustomerFlow() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "917777777777"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "917777777777",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(warehouseService, never()).sendPendingOrdersInbox(anyString());
+        // Since productRepository is mocked, it will return empty, and handle text message customer flow.
+        verify(productRepository).findAll();
+    }
+
+    @Test
+    void testWarehouseListReplyViewOrder() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "918888888888"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "918888888888",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "list_reply",
+                                  "list_reply": {
+                                    "id": "VIEW_ORDER_1042"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(warehouseService).processListReply("918888888888", "VIEW_ORDER_1042");
+    }
 }

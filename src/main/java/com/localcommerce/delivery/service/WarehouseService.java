@@ -24,11 +24,44 @@ public class WarehouseService {
     private final CustomerOrderRepository orderRepo;
     private final WhatsAppOutboundClient outboundClient;
     private final ProductRepository productRepo;
-
+    private final WarehouseAlertService warehouseAlertService;
 
     // The single phone number sitting on your packing table
     @Value("${warehouse.phone.number}")
     private String warehousePhoneNumber;
+
+    public void sendPendingOrdersInbox(String senderNumber) {
+        if (!senderNumber.equals(warehousePhoneNumber)) {
+            return;
+        }
+
+        java.util.List<CustomerOrder> pendingOrders = orderRepo.findByStatus(OrderStatus.PENDING_WAREHOUSE);
+
+        if (pendingOrders.isEmpty()) {
+            outboundClient.sendTextUpdate(warehousePhoneNumber, "No pending warehouse orders.");
+        } else {
+            outboundClient.sendPendingOrdersList(warehousePhoneNumber, pendingOrders);
+        }
+    }
+
+    public void processListReply(String senderNumber, String listId) {
+        if (!senderNumber.equals(warehousePhoneNumber)) {
+            System.err.println("Unauthorized list reply attempt from: " + senderNumber);
+            return;
+        }
+
+        if (listId.startsWith(WhatsAppConstants.VIEW_ORDER)) {
+            Long orderId = extractId(listId, WhatsAppConstants.VIEW_ORDER);
+            CustomerOrder order = orderRepo.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found"));
+            
+            if (order.getStatus() == OrderStatus.PENDING_WAREHOUSE) {
+                warehouseAlertService.sendNewOrderAlert(order);
+            } else {
+                outboundClient.sendTextUpdate(warehousePhoneNumber, "Order #" + order.getDisplayId() + " is no longer pending.");
+            }
+        }
+    }
 
     @Transactional
     public void processButtonTap(String senderNumber, String buttonId) {
