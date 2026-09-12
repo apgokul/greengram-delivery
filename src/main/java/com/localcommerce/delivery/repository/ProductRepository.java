@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -21,4 +22,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM Product p WHERE p.sku = :sku")
     Optional<Product> findBySkuForUpdate(@Param("sku") String sku);
+
+    // Fetch sellable products (active with positive stock)
+    List<Product> findByIsActiveTrueAndStockQuantityGreaterThan(Integer stockQuantity);
 }

@@ -161,18 +161,12 @@ public class WhatsAppWebhookController {
                                 outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
                             }
                         } else {
-                            // Fetch all products from DB
-                            List<Product> allProducts = productRepository.findAll();
+                            // Fetch active products with positive stock from DB
+                            List<Product> sellableProducts = productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0);
 
-                            // Extract SKUs only for items that actually have inventory
-                            List<String> availableSkus = allProducts.stream()
-                                    .filter(Product::isActive)
-                                    .filter(p -> p.getStockQuantity() != null && p.getStockQuantity() > 0)
-                                    .collect(java.util.stream.Collectors.groupingBy(
-                                            p -> p.getSku().split("_")[0]
-                                    ))
-                                    .values().stream()
-                                    .map(groupedVariants -> groupedVariants.getFirst().getSku())
+                            // Map directly to their exact SKUs
+                            List<String> availableSkus = sellableProducts.stream()
+                                    .map(Product::getSku)
                                     .toList();
 
                             // Send the dynamic catalog

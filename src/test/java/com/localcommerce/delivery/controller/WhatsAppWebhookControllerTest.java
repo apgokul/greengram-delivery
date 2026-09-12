@@ -24,9 +24,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.mockito.ArgumentCaptor;
+import com.localcommerce.delivery.model.Product;
+import java.util.Collections;
 
 @ExtendWith(MockitoExtension.class)
 class WhatsAppWebhookControllerTest {
@@ -147,5 +154,95 @@ class WhatsAppWebhookControllerTest {
         // Verify that it didn't try to call any message processing dependencies
         verifyNoInteractions(orderService);
         verifyNoInteractions(outboundClient);
+    }
+
+    @Test
+    void testCatalogShowsOnlyActiveAndInStockVariants() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messaging_product": "whatsapp",
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        Product p1 = new Product();
+        p1.setSku("chillipwd_250g");
+        p1.setActive(true);
+        p1.setStockQuantity(10);
+
+        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0)).thenReturn(List.of(p1));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
+        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
+
+        List<String> skus = skusCaptor.getValue();
+        assertEquals(1, skus.size());
+        assertEquals("chillipwd_250g", skus.get(0));
+    }
+
+    @Test
+    void testCatalogEmptyWhenNoSellableProducts() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messaging_product": "whatsapp",
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0)).thenReturn(Collections.emptyList());
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(outboundClient, never()).sendCatalogMessage(any(), any());
+        verify(outboundClient).sendTextUpdate(eq("919876543210"), eq("We are currently completely sold out! Please check back later."));
     }
 }
