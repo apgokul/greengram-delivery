@@ -64,7 +64,13 @@ public class WhatsAppConstants {
 
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =
-            "🛒 We have your cart!\n\nPlease tap the attachment pin 📎 and send us your 'Current Location' so we can route your delivery.";
+            "📍 *WHERE SHOULD WE DELIVER?*\n\n"
+                    + "Your cart is ready! 🛒\n\n"
+                    + "*Please send us your current location:*\n\n"
+                    + "📎 Tap the attachment icon\n"
+                    + "📍 Select *Location*\n"
+                    + "📤 Tap *Send your current location*\n\n"
+                    + "This helps us deliver your order to the correct address. ❤️";
 
     // Order status alerts
     public static final String ORDER_CONFIRMED_ALERT =
