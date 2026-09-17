@@ -159,7 +159,7 @@ public class WhatsAppOutboundClient {
      * ALERT 1: Order Confirmed (Triggered by Warehouse Accept)
      */
     public void sendOrderConfirmedAlert(String toPhoneNumber) {
-        String message = WhatsAppConstants.ORDER_CONFIRMED_ALERT;
+        String message = WhatsAppConstants.ORDER_PACKING_ALERT;
         sendTextUpdate(toPhoneNumber, message);
     }
 
