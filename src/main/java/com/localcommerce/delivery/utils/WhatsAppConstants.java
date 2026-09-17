@@ -73,8 +73,10 @@ public class WhatsAppConstants {
                     + "This helps us deliver your order to the correct address. ❤️";
 
     // Order status alerts
-    public static final String ORDER_CONFIRMED_ALERT =
-            "✅ *Order confirmed!*\n\nWe are packing it now and it will be delivered to you today. We will let you know as soon as it's out for delivery.";
+    public static final String ORDER_PACKING_ALERT =
+            "📦 *Your order is being packed!*\n\n"
+                    + "We've started preparing your order and it will be delivered to you today. "
+                    + "We'll let you know as soon as it's out for delivery.";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
             "🛵 *Out for Delivery!*\n\nOur rider, %s, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
