@@ -172,10 +172,11 @@ public class WhatsAppWebhookController {
                             // Fetch active products with positive stock from DB
                             List<Product> sellableProducts = productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0);
 
-                            // Map directly to their exact SKUs
-                            List<String> availableSkus = sellableProducts.stream()
-                                    .map(Product::getSku)
-                                    .toList();
+                            // Group by logical SKU base and select one representative
+                            List<String> availableSkus = groupAndSelectRepresentativeSkus(sellableProducts);
+                            
+                            log.info("Found {} sellable variants across {} logical products; preparing catalog entries", 
+                                    sellableProducts.size(), availableSkus.size());
 
                             // Send the dynamic catalog
                             if (!availableSkus.isEmpty()) {
@@ -243,5 +244,22 @@ public class WhatsAppWebhookController {
             log.error("Error processing WhatsApp webhook payload", e);
         }
         return ResponseEntity.ok().build();
+    }
+
+    private List<String> groupAndSelectRepresentativeSkus(List<Product> products) {
+        return products.stream()
+                .map(Product::getSku)
+                .collect(java.util.stream.Collectors.groupingBy(
+                        sku -> {
+                            int lastUnderscore = sku.lastIndexOf('_');
+                            return lastUnderscore > 0 ? sku.substring(0, lastUnderscore) : sku;
+                        },
+                        java.util.stream.Collectors.minBy(String::compareTo)
+                ))
+                .values().stream()
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .sorted()
+                .toList();
     }
 }
