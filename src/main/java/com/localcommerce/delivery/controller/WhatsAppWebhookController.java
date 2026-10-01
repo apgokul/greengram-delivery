@@ -203,7 +203,7 @@ public class WhatsAppWebhookController {
                                 try {
                                     orderService.finalizeOrderCheckout(orderId);
                                     // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
-//                                    outboundClient.sendTextUpdate(phoneNumber, "✅ Order confirmed! Sending it to our local store for packing.");
+                                    outboundClient.sendTextUpdate(phoneNumber, WhatsAppConstants.ORDER_PACKING_ALERT);
                                 } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
                                     log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
                                     outboundClient.sendTextUpdate(phoneNumber, e.getMessage());

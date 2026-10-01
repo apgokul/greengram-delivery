@@ -93,10 +93,7 @@ public class WarehouseService {
         order.advanceStateTo(OrderStatus.PACKING); // Jumping straight to packing since they accepted it
         orderRepo.save(order);
 
-        // 2. Alert the customer (keeps them engaged)
-        String customerPhone = order.getCustomer().getWhatsappNumber();
-        outboundClient.sendOrderConfirmedAlert(customerPhone);
-        // 3. Send the NEXT button to the warehouse
+        // 2. Send the NEXT button to the warehouse
         outboundClient.sendBagReadyPrompt(warehousePhoneNumber, order);
     }
 
