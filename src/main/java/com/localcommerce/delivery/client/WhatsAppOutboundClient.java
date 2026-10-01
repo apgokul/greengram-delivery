@@ -156,15 +156,7 @@ public class WhatsAppOutboundClient {
     // Inside com.localcommerce.delivery.client.WhatsAppOutboundClient
 
     /**
-     * ALERT 1: Order Confirmed (Triggered by Warehouse Accept)
-     */
-    public void sendOrderConfirmedAlert(String toPhoneNumber) {
-        String message = WhatsAppConstants.ORDER_PACKING_ALERT;
-        sendTextUpdate(toPhoneNumber, message);
-    }
-
-    /**
-     * ALERT 2: Out for Delivery (Triggered by Routing Engine)
+     * ALERT : Out for Delivery (Triggered by Routing Engine)
      */
     public void sendOutForDeliveryAlert(String toPhoneNumber, String riderName, String riderPhone, String etaMins) {
         String message = String.format(

@@ -74,15 +74,22 @@ public class WhatsAppConstants {
 
     // Order status alerts
     public static final String ORDER_PACKING_ALERT =
-            "📦 *Your order is being packed!*\n\n"
-                    + "We've started preparing your order and it will be delivered to you today. "
-                    + "We'll let you know as soon as it's out for delivery.";
+            "✅ *Order confirmed!*\n" +
+                    "\n" +
+                    "📦 *Your order is being packed!*\n" +
+                    "\n" +
+                    "Your order will arrive *between 5:00 PM and 8:00 PM.*\n" +
+                    "\n" +
+                    "We'll notify you as soon as it's *out for delivery.*\n";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
             "🛵 *Out for Delivery!*\n\nOur rider, %s, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
 
     public static final String DELIVERED_ALERT =
-            "📦 *Delivered!*\n\nEnjoy your groceries! If you need any help with your items, please call this number. See you next time!";
+            "📦 *Order delivered!*\n\n" +
+                    "We hope you enjoy your groceries! 🌿\n\n" +
+                    "If you have any questions or need help with your order, we're just a call away.\n\n" +
+                    "Thank you for choosing GreenGram. See you again soon! 😊";
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 
