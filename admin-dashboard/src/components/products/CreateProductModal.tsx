@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
-import { CreateProductRequest } from '../../types/product';
+import { CreateProductRequest, InventoryDTO } from '../../types/product';
 import { productsApi } from '../../api/products';
+import { inventoryApi } from '../../api/inventories';
 
 interface CreateProductModalProps {
     isOpen: boolean;
@@ -10,7 +11,10 @@ interface CreateProductModalProps {
 }
 
 export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, onClose, onSuccess }) => {
-    const [formData, setFormData] = useState<CreateProductRequest>({
+    const [inventories, setInventories] = useState<InventoryDTO[]>([]);
+
+    // Product form state
+    const [formData, setFormData] = useState<Omit<CreateProductRequest, 'inventoryId'>>({
         sku: '',
         name: '',
         currentPrice: 0,
@@ -18,8 +22,31 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
         packageUnit: 'KG',
         active: true
     });
+    
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (isOpen) {
+            fetchInventories();
+        }
+    }, [isOpen]);
+
+    const fetchInventories = async () => {
+        try {
+            const data = await inventoryApi.getAllInventories();
+            setInventories(data);
+        } catch (err) {
+            console.error("Failed to fetch inventories:", err);
+        }
+    };
+
+    const getBaseUnit = (packUnit: string) => {
+        const unit = packUnit.toUpperCase();
+        if (unit === 'G' || unit === 'KG') return 'KG';
+        if (unit === 'ML' || unit === 'L') return 'L';
+        return unit; // fallback for PCS, PACK, etc.
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -32,11 +59,35 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
 
         setLoading(true);
         try {
+            // Extract Base SKU and Determine Base Unit
+            const extractedBaseSku = formData.sku.split('_')[0] || formData.sku;
+            const baseUnit = getBaseUnit(formData.packageUnit || 'KG');
+
+            // Find or Create Inventory
+            let inventoryId: number;
+            const existingInventory = inventories.find(inv => inv.baseSku === extractedBaseSku);
+
+            if (existingInventory) {
+                inventoryId = existingInventory.id;
+            } else {
+                const newInv = await inventoryApi.createInventory({
+                    baseSku: extractedBaseSku,
+                    unit: baseUnit
+                });
+                inventoryId = newInv.id;
+                
+                // Update local state to avoid refetching immediately if they create another
+                setInventories(prev => [...prev, newInv]);
+            }
+
+            // Create Product
             await productsApi.create({
                 ...formData,
+                inventoryId,
                 packageQuantity: formData.packageQuantity ? Number(formData.packageQuantity) : undefined,
                 packageUnit: formData.packageUnit || undefined
             });
+            
             onSuccess();
             onClose();
             // Reset form
@@ -49,37 +100,37 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Add New Product">
+        <Modal isOpen={isOpen} onClose={onClose} title="Add New Product Variant">
             <form onSubmit={handleSubmit}>
                 <div className="modal-body">
                     {error && <div className="alert alert-error">{error}</div>}
-                    
+
                     <div className="input-group">
-                        <label className="input-label">SKU</label>
+                        <label className="input-label">Variant SKU</label>
                         <input 
                             type="text" 
                             className="input-field" 
                             value={formData.sku}
                             onChange={e => setFormData({...formData, sku: e.target.value})}
-                            placeholder="e.g. CHILLIPWD_1KG"
+                            placeholder="e.g. SUGAR_1KG"
                             required
                         />
                     </div>
                     
                     <div className="input-group">
-                        <label className="input-label">Product Name</label>
+                        <label className="input-label">Display Name</label>
                         <input 
                             type="text" 
                             className="input-field" 
                             value={formData.name}
                             onChange={e => setFormData({...formData, name: e.target.value})}
-                            placeholder="e.g. Chilli Powder"
+                            placeholder="e.g. Sugar"
                             required
                         />
                     </div>
                     
                     <div className="input-group">
-                        <label className="input-label">Initial Price (₹)</label>
+                        <label className="input-label">Price (₹)</label>
                         <input 
                             type="number" 
                             step="0.01"
@@ -92,7 +143,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                         <div className="input-group">
-                            <label className="input-label">Quantity / Weight</label>
+                            <label className="input-label">Pack Size / Quantity</label>
                             <input 
                                 type="number" 
                                 step="0.01"
@@ -103,7 +154,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                             />
                         </div>
                         <div className="input-group">
-                            <label className="input-label">Unit</label>
+                            <label className="input-label">Pack Unit</label>
                             <select 
                                 className="input-field"
                                 value={formData.packageUnit || ''}
@@ -120,22 +171,20 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                         </div>
                     </div>
 
-
-
-                    <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
+                    <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
                         <input 
                             type="checkbox" 
                             id="isActive"
                             checked={formData.active}
                             onChange={e => setFormData({...formData, active: e.target.checked})}
                         />
-                        <label htmlFor="isActive" className="input-label" style={{ marginBottom: 0 }}>Product is Active</label>
+                        <label htmlFor="isActive" className="input-label" style={{ marginBottom: 0 }}>Variant is Active</label>
                     </div>
                 </div>
                 <div className="modal-footer">
                     <button type="button" className="btn btn-secondary" onClick={onClose} disabled={loading}>Cancel</button>
                     <button type="submit" className="btn btn-primary" disabled={loading}>
-                        {loading ? <div className="spinner"></div> : 'Create Product'}
+                        {loading ? <div className="spinner"></div> : 'Create Variant'}
                     </button>
                 </div>
             </form>

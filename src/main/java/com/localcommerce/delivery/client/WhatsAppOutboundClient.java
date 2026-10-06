@@ -332,12 +332,22 @@ public class WhatsAppOutboundClient {
     }
 
     public void sendCatalogMessage(String recipientId) {
-        String messageText = "Welcome to GreenGram! 🛒\n\nTap the Store icon 🏪 at the top of this chat to view our full menu and place your order. Quality at your doorstep!";
-        
         Map<String, Object> payload = new java.util.HashMap<>();
         payload.put(WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP);
-        payload.put(WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_TEXT);
-        payload.put(WhatsAppConstants.TEXT, Map.of(WhatsAppConstants.BODY, messageText));
+        payload.put("recipient_type", "individual");
+        payload.put(WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE);
+        
+        Map<String, Object> interactive = new java.util.HashMap<>();
+        interactive.put(WhatsAppConstants.TYPE, "catalog_message");
+        interactive.put(WhatsAppConstants.BODY, Map.of(
+                WhatsAppConstants.TEXT,
+                "Welcome to GreenGram! 🛒\n\n" +
+                        "Your everyday groceries, made easy. 💚\n\n" +
+                        "Explore our products and place your order below. 👇"
+        ));
+        interactive.put(WhatsAppConstants.ACTION, Map.of("name", "catalog_message"));
+        
+        payload.put(WhatsAppConstants.INTERACTIVE, interactive);
 
         // Dynamically route standard numbers vs BSUIDs
         if (recipientId.length() >= 15 || recipientId.contains(".")) {
@@ -346,7 +356,7 @@ public class WhatsAppOutboundClient {
             payload.put(WhatsAppConstants.TO, recipientId);
         }
 
-        log.info("Sending static catalog text to {}", recipientId);
+        log.info("Sending interactive catalog message to {}", recipientId);
         sendPostRequest(payload);
     }
 }

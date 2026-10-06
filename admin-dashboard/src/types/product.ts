@@ -23,6 +23,7 @@ export interface CreateProductRequest {
     packageQuantity?: number;
     packageUnit?: 'G' | 'KG' | 'ML' | 'L' | string;
     active: boolean;
+    inventoryId: number;
 }
 
 

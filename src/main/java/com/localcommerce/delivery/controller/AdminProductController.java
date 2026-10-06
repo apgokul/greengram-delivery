@@ -23,7 +23,7 @@ public class AdminProductController {
     @PostMapping
     public ResponseEntity<?> createProduct(
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
-            @RequestBody Product product) {
+            @RequestBody com.localcommerce.delivery.dto.CreateProductDTO product) {
 
         try {
             com.localcommerce.delivery.dto.ProductDTO createdProduct = adminService.createNewProduct(product, adminUser);
