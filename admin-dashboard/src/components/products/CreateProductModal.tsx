@@ -14,9 +14,8 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
         sku: '',
         name: '',
         currentPrice: 0,
-        stockQuantity: 0,
-        quantity: 1,
-        unit: 'KG',
+        packageQuantity: 1,
+        packageUnit: 'KG',
         active: true
     });
     const [loading, setLoading] = useState(false);
@@ -35,13 +34,13 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
         try {
             await productsApi.create({
                 ...formData,
-                quantity: formData.quantity ? Number(formData.quantity) : undefined,
-                unit: formData.unit || undefined
+                packageQuantity: formData.packageQuantity ? Number(formData.packageQuantity) : undefined,
+                packageUnit: formData.packageUnit || undefined
             });
             onSuccess();
             onClose();
             // Reset form
-            setFormData({ sku: '', name: '', currentPrice: 0, stockQuantity: 0, quantity: 1, unit: 'KG', active: true });
+            setFormData({ sku: '', name: '', currentPrice: 0, packageQuantity: 1, packageUnit: 'KG', active: true });
         } catch (err: any) {
             setError(err.message || 'Failed to create product');
         } finally {
@@ -98,16 +97,17 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                                 type="number" 
                                 step="0.01"
                                 className="input-field" 
-                                value={formData.quantity || ''}
-                                onChange={e => setFormData({...formData, quantity: parseFloat(e.target.value)})}
+                                value={formData.packageQuantity || ''}
+                                onChange={e => setFormData({...formData, packageQuantity: parseFloat(e.target.value)})}
+                                min="0.01"
                             />
                         </div>
                         <div className="input-group">
                             <label className="input-label">Unit</label>
                             <select 
                                 className="input-field"
-                                value={formData.unit || ''}
-                                onChange={e => setFormData({...formData, unit: e.target.value})}
+                                value={formData.packageUnit || ''}
+                                onChange={e => setFormData({...formData, packageUnit: e.target.value})}
                             >
                                 <option value="">None</option>
                                 <option value="G">G (Grams)</option>
@@ -120,16 +120,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                         </div>
                     </div>
 
-                    <div className="input-group">
-                        <label className="input-label">Initial Stock</label>
-                        <input 
-                            type="number" 
-                            className="input-field" 
-                            value={formData.stockQuantity || ''}
-                            onChange={e => setFormData({...formData, stockQuantity: parseInt(e.target.value, 10)})}
-                            required
-                        />
-                    </div>
+
 
                     <div className="input-group" style={{ flexDirection: 'row', alignItems: 'center', gap: '0.5rem' }}>
                         <input 

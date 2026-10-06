@@ -2,7 +2,6 @@ package com.localcommerce.delivery.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
-import com.localcommerce.delivery.repository.ProductRepository;
 import com.localcommerce.delivery.service.BatchingService;
 import com.localcommerce.delivery.service.OrderService;
 import com.localcommerce.delivery.service.WarehouseService;
@@ -32,7 +31,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.mockito.ArgumentCaptor;
-import com.localcommerce.delivery.model.Product;
 import java.util.Collections;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,8 +46,7 @@ class WhatsAppWebhookControllerTest {
     private WarehouseService warehouseService;
     @Mock
     private BatchingService batchingService;
-    @Mock
-    private ProductRepository productRepository;
+
 
     @InjectMocks
     private WhatsAppWebhookController controller;
@@ -158,39 +155,9 @@ class WhatsAppWebhookControllerTest {
     }
 
     @Test
-    void testCatalogShowsOnlyActiveAndInStockVariants() throws Exception {
-        String payload = """
-                {
-                  "entry": [
-                    {
-                      "changes": [
-                        {
-                          "value": {
-                            "messaging_product": "whatsapp",
-                            "messages": [
-                              {
-                                "from": "919876543210",
-                                "type": "text",
-                                "text": {
-                                  "body": "Hi"
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-                """;
+    void testCatalogTriggersStaticMessage() throws Exception {
+        String payload = createTextPayload("Hi", "919876543210");
         String signature = generateSignature(payload);
-
-        Product p1 = new Product();
-        p1.setSku("chillipwd_250g");
-        p1.setActive(true);
-        p1.setStockQuantity(10);
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0)).thenReturn(List.of(p1));
 
         mockMvc.perform(post("/api/webhooks/whatsapp")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -198,53 +165,7 @@ class WhatsAppWebhookControllerTest {
                         .header("X-Hub-Signature-256", signature))
                 .andExpect(status().isOk());
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
-        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
-
-        List<String> skus = skusCaptor.getValue();
-        assertEquals(1, skus.size());
-        assertEquals("chillipwd_250g", skus.get(0));
-    }
-
-    @Test
-    void testCatalogEmptyWhenNoSellableProducts() throws Exception {
-        String payload = """
-                {
-                  "entry": [
-                    {
-                      "changes": [
-                        {
-                          "value": {
-                            "messaging_product": "whatsapp",
-                            "messages": [
-                              {
-                                "from": "919876543210",
-                                "type": "text",
-                                "text": {
-                                  "body": "Hi"
-                                }
-                              }
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  ]
-                }
-                """;
-        String signature = generateSignature(payload);
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0)).thenReturn(Collections.emptyList());
-
-        mockMvc.perform(post("/api/webhooks/whatsapp")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(payload)
-                        .header("X-Hub-Signature-256", signature))
-                .andExpect(status().isOk());
-
-        verify(outboundClient, never()).sendCatalogMessage(any(), any());
-        verify(outboundClient).sendTextUpdate(eq("919876543210"), eq("We are currently completely sold out! Please check back later."));
+        verify(outboundClient).sendCatalogMessage("919876543210");
     }
 
     @Test
@@ -327,8 +248,8 @@ class WhatsAppWebhookControllerTest {
                 .andExpect(status().isOk());
 
         verify(warehouseService, never()).sendPendingOrdersInbox(anyString());
-        // Since productRepository is mocked, it will return empty, and handle text message customer flow.
-        verify(productRepository).findByIsActiveTrueAndStockQuantityGreaterThan(0);
+        // It should handle text message customer flow and send catalog message.
+        verify(outboundClient).sendCatalogMessage("917777777777");
     }
 
     @Test
@@ -422,128 +343,7 @@ class WhatsAppWebhookControllerTest {
         verify(outboundClient).sendTextUpdate("918888888888", "Sorry, product is currently out of stock.");
     }
 
-    @Test
-    void testCatalogGroupsMultipleVariantsOfSameProduct() throws Exception {
-        String payload = createTextPayload("Hi", "919876543210");
-        String signature = generateSignature(payload);
 
-        Product p1 = createProduct("chillipwd_250g", true, 10);
-        Product p2 = createProduct("chillipwd_500g", true, 5);
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0))
-                .thenReturn(List.of(p1, p2));
-
-        mockMvc.perform(post("/api/webhooks/whatsapp")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(payload)
-                        .header("X-Hub-Signature-256", signature))
-                .andExpect(status().isOk());
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
-        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
-
-        List<String> skus = skusCaptor.getValue();
-        assertEquals(1, skus.size());
-        assertEquals("chillipwd_250g", skus.get(0), "Should deterministically pick the first SKU alphabetically");
-    }
-
-    @Test
-    void testCatalogKeepsDifferentLogicalProductsSeparate() throws Exception {
-        String payload = createTextPayload("Hi", "919876543210");
-        String signature = generateSignature(payload);
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0))
-                .thenReturn(List.of(
-                        createProduct("chillipwd_250g", true, 10),
-                        createProduct("chillipwd_500g", true, 5),
-                        createProduct("turmpwd_100g", true, 3),
-                        createProduct("turmpwd_250g", true, 7)
-                ));
-
-        mockMvc.perform(post("/api/webhooks/whatsapp")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(payload)
-                        .header("X-Hub-Signature-256", signature))
-                .andExpect(status().isOk());
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
-        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
-
-        List<String> skus = skusCaptor.getValue();
-        assertEquals(2, skus.size());
-        assertTrue(skus.contains("chillipwd_250g"));
-        assertTrue(skus.contains("turmpwd_100g"));
-    }
-
-    @Test
-    void testCatalogSkuWithoutUnderscoreIsOwnGroup() throws Exception {
-        String payload = createTextPayload("Hi", "919876543210");
-        String signature = generateSignature(payload);
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0))
-                .thenReturn(List.of(
-                        createProduct("wheatflour", true, 10),
-                        createProduct("chillipwd_250g", true, 5)
-                ));
-
-        mockMvc.perform(post("/api/webhooks/whatsapp")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(payload)
-                        .header("X-Hub-Signature-256", signature))
-                .andExpect(status().isOk());
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
-        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
-
-        List<String> skus = skusCaptor.getValue();
-        assertEquals(2, skus.size());
-        assertTrue(skus.contains("wheatflour"));
-        assertTrue(skus.contains("chillipwd_250g"));
-    }
-
-    @Test
-    void testCatalogGroupsMoreThan30Items() throws Exception {
-        String payload = createTextPayload("Hi", "919876543210");
-        String signature = generateSignature(payload);
-
-        List<Product> products = new java.util.ArrayList<>();
-        // Create 35 distinct logical products, each with 2 variants
-        for (int i = 1; i <= 35; i++) {
-            String baseSku = String.format("prod%02d", i);
-            products.add(createProduct(baseSku + "_100g", true, 10));
-            products.add(createProduct(baseSku + "_200g", true, 5));
-        }
-
-        when(productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0))
-                .thenReturn(products);
-
-        mockMvc.perform(post("/api/webhooks/whatsapp")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(payload)
-                        .header("X-Hub-Signature-256", signature))
-                .andExpect(status().isOk());
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> skusCaptor = ArgumentCaptor.forClass(List.class);
-        verify(outboundClient).sendCatalogMessage(eq("919876543210"), skusCaptor.capture());
-
-        List<String> skus = skusCaptor.getValue();
-        // The controller should emit all 35 grouped items (outboundClient handles the max 30 limit later)
-        assertEquals(35, skus.size());
-        assertTrue(skus.contains("prod01_100g"));
-        assertTrue(skus.contains("prod35_100g"));
-    }
-
-    private Product createProduct(String sku, boolean active, int stock) {
-        Product p = new Product();
-        p.setSku(sku);
-        p.setActive(active);
-        p.setStockQuantity(stock);
-        return p;
-    }
 
     private String createTextPayload(String text, String fromNumber) {
         return """

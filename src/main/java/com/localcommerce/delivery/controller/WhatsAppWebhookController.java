@@ -6,8 +6,7 @@ import com.localcommerce.delivery.dto.OrderProcessing;
 import com.localcommerce.delivery.dto.WhatsAppWebhookPayload;
 import com.localcommerce.delivery.model.Customer;
 import com.localcommerce.delivery.model.CustomerOrder;
-import com.localcommerce.delivery.model.Product;
-import com.localcommerce.delivery.repository.ProductRepository;
+
 import com.localcommerce.delivery.service.BatchingService;
 import com.localcommerce.delivery.service.OrderService;
 import com.localcommerce.delivery.service.WarehouseService;
@@ -48,16 +47,14 @@ public class WhatsAppWebhookController {
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseService warehouseService;
     private final BatchingService batchingService;
-    private final ProductRepository productRepository;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService, ProductRepository productRepository) {
+    public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService) {
         this.orderService = orderService;
         this.outboundClient = outboundClient;
         this.warehouseService = warehouseService;
         this.batchingService = batchingService;
-        this.productRepository = productRepository;
     }
 
     @GetMapping("/whatsapp")
@@ -169,21 +166,8 @@ public class WhatsAppWebhookController {
                                 outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
                             }
                         } else {
-                            // Fetch active products with positive stock from DB
-                            List<Product> sellableProducts = productRepository.findByIsActiveTrueAndStockQuantityGreaterThan(0);
-
-                            // Group by logical SKU base and select one representative
-                            List<String> availableSkus = groupAndSelectRepresentativeSkus(sellableProducts);
-                            
-                            log.info("Found {} sellable variants across {} logical products; preparing catalog entries", 
-                                    sellableProducts.size(), availableSkus.size());
-
-                            // Send the dynamic catalog
-                            if (!availableSkus.isEmpty()) {
-                                outboundClient.sendCatalogMessage(phoneNumber, availableSkus);
-                            } else {
-                                outboundClient.sendTextUpdate(phoneNumber, "We are currently completely sold out! Please check back later.");
-                            }
+                            // Send the static catalog instruction message
+                            outboundClient.sendCatalogMessage(phoneNumber);
                         }
                     } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
                         Double lat = message.getLocation().getLatitude();
@@ -246,20 +230,5 @@ public class WhatsAppWebhookController {
         return ResponseEntity.ok().build();
     }
 
-    private List<String> groupAndSelectRepresentativeSkus(List<Product> products) {
-        return products.stream()
-                .map(Product::getSku)
-                .collect(java.util.stream.Collectors.groupingBy(
-                        sku -> {
-                            int lastUnderscore = sku.lastIndexOf('_');
-                            return lastUnderscore > 0 ? sku.substring(0, lastUnderscore) : sku;
-                        },
-                        java.util.stream.Collectors.minBy(String::compareTo)
-                ))
-                .values().stream()
-                .filter(java.util.Optional::isPresent)
-                .map(java.util.Optional::get)
-                .sorted()
-                .toList();
-    }
+
 }

@@ -31,16 +31,23 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
         if (!product) return;
         setError(null);
 
-        if (quantity <= 0) {
+        if (!quantity || isNaN(quantity) || quantity <= 0) {
             setError("Quantity must be greater than zero.");
             return;
         }
 
+        if (!product.inventory) {
+            setError("Inventory data is missing.");
+            return;
+        }
+
         const adjustmentAmount = operation === 'ADD' ? quantity : -quantity;
+        const currentStock = product.inventory.stockQuantity || 0;
+        const newStock = currentStock + adjustmentAmount;
 
         setLoading(true);
         try {
-            await productsApi.adjustStock(product.sku, adjustmentAmount, reason || 'Manual adjustment via admin');
+            await productsApi.adjustStock(product.inventory.id, newStock);
             onSuccess();
             onClose();
         } catch (err: any) {
@@ -57,17 +64,17 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
             <form onSubmit={handleSubmit}>
                 <div className="modal-body">
                     {error && <div className="alert alert-error">{error}</div>}
-                    
+
                     <div className="input-group">
                         <label className="input-label">Current Stock</label>
                         <div className="input-field" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
-                            {product.stockQuantity}
+                            {product.inventory?.stockQuantity ?? 0} {product.inventory?.unit}
                         </div>
                     </div>
 
                     <div className="input-group">
                         <label className="input-label">Operation</label>
-                        <select 
+                        <select
                             className="input-field"
                             value={operation}
                             onChange={(e) => setOperation(e.target.value as 'ADD' | 'REDUCE')}
@@ -76,24 +83,25 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
                             <option value="REDUCE">Reduce Stock</option>
                         </select>
                     </div>
-                    
+
                     <div className="input-group">
-                        <label className="input-label">Quantity</label>
-                        <input 
-                            type="number" 
-                            className="input-field" 
+                        <label className="input-label">Quantity (Kg/L)</label>
+                        <input
+                            type="number"
+                            step="0.01"
+                            className="input-field"
                             value={quantity || ''}
-                            onChange={e => setQuantity(parseInt(e.target.value, 10))}
-                            min="1"
+                            onChange={e => setQuantity(parseFloat(e.target.value))}
+                            min="0.01"
                             required
                         />
                     </div>
 
                     <div className="input-group">
                         <label className="input-label">Reason (optional)</label>
-                        <input 
-                            type="text" 
-                            className="input-field" 
+                        <input
+                            type="text"
+                            className="input-field"
                             value={reason}
                             onChange={e => setReason(e.target.value)}
                             placeholder="e.g. Restock delivery"

@@ -33,8 +33,7 @@ public class WhatsAppOutboundClient {
     @Value("${warehouse.phone.number}")
     private String warehousePhoneNumber;
 
-    @Value("${whatsapp.catalog.id}")
-    private String catalogId;
+
 
     private final RestTemplate restTemplate;
     private final SmsFallbackService smsFallbackService;
@@ -332,60 +331,22 @@ public class WhatsAppOutboundClient {
         sendPostRequest(body);
     }
 
-    public void sendCatalogMessage(String recipientId, List<String> activeSkus) {
-
-        Map<String, Object> headerNode = Map.of(
-                "type", "text",
-                "text", "GreenGram"
-        );
-
-        Map<String, Object> bodyNode = Map.of(
-                "text", "Welcome to GreenGram! 🛒 Tap below to view our menu and place your order."
-        );
-
-        Map<String, Object> footerNode = Map.of(
-                "text", "Quality at your doorstep."
-        );
-
-        // Dynamically build the product list from your database SKUs (Meta limits this to 30 items max)
-        List<Map<String, Object>> productItems = new java.util.ArrayList<>();
-        for (int i = 0; i < activeSkus.size() && i < 30; i++) {
-            productItems.add(Map.of("product_retailer_id", activeSkus.get(i)));
-        }
-
-        // Build the section
-        Map<String, Object> section1 = Map.of(
-                "title", "Fresh Groceries",
-                "product_items", productItems
-        );
-
-        Map<String, Object> actionNode = Map.of(
-                "catalog_id", catalogId,
-                "sections", List.of(section1)
-        );
-
-        Map<String, Object> interactiveNode = Map.of(
-                "type", "product_list",
-                "header", headerNode,
-                "body", bodyNode,
-                "footer", footerNode,
-                "action", actionNode
-        );
-
+    public void sendCatalogMessage(String recipientId) {
+        String messageText = "Welcome to GreenGram! 🛒\n\nTap the Store icon 🏪 at the top of this chat to view our full menu and place your order. Quality at your doorstep!";
+        
         Map<String, Object> payload = new java.util.HashMap<>();
-        payload.put("messaging_product", "whatsapp");
-        payload.put("recipient_type", "individual");
-        payload.put("type", "interactive");
-        payload.put("interactive", interactiveNode);
+        payload.put(WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP);
+        payload.put(WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_TEXT);
+        payload.put(WhatsAppConstants.TEXT, Map.of(WhatsAppConstants.BODY, messageText));
 
         // Dynamically route standard numbers vs BSUIDs
         if (recipientId.length() >= 15 || recipientId.contains(".")) {
             payload.put("recipient", recipientId);
         } else {
-            payload.put("to", recipientId);
+            payload.put(WhatsAppConstants.TO, recipientId);
         }
 
-        log.info("Sending Multi-Product Message with {} items to {}", productItems.size(), recipientId);
+        log.info("Sending static catalog text to {}", recipientId);
         sendPostRequest(payload);
     }
 }

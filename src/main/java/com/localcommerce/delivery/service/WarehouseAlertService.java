@@ -103,10 +103,12 @@ public class WarehouseAlertService {
 
     // Inside com.localcommerce.delivery.service.WarehouseAlertService
 
-    public void sendLowStockAlert(Product product) {
+    public void sendLowStockAlert(com.localcommerce.delivery.model.Inventory inventory) {
         String alertMessage = String.format(
                 WhatsAppConstants.LOW_STOCK_ALERT,
-                product.getDisplayName(), product.getSku(), product.getStockQuantity()
+                inventory.getBaseSku(), 
+                inventory.getStockQuantity().toPlainString(), 
+                inventory.getUnit().name()
         );
 
         // Send this directly to the warehouse phone number
