@@ -19,33 +19,6 @@ public class AdminProductController {
 
 
 
-    @PatchMapping("/{sku}/stock")
-    public ResponseEntity<?> adjustStock(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
-            @PathVariable String sku,
-            @RequestParam int adjustmentAmount,
-            @RequestParam String reason) {
-
-        // Execute Business Logic
-        try {
-            Product updatedProduct = adminService.adjustStock(sku, adjustmentAmount, reason, adminUser);
-
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "sku", updatedProduct.getSku(),
-                    "new_stock", updatedProduct.getStockQuantity(),
-                    "message", "Stock adjusted successfully"
-            ));
-
-        } catch (IllegalArgumentException e) {
-            // Catches the "stock cannot be negative" rule we wrote
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            // Catches "Product not found"
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
-        }
-    }
-
     // --- 1. CREATE A NEW PRODUCT ---
     @PostMapping
     public ResponseEntity<?> createProduct(
@@ -53,7 +26,7 @@ public class AdminProductController {
             @RequestBody Product product) {
 
         try {
-            Product createdProduct = adminService.createNewProduct(product, adminUser);
+            com.localcommerce.delivery.dto.ProductDTO createdProduct = adminService.createNewProduct(product, adminUser);
             return ResponseEntity.status(HttpStatus.CREATED).body(createdProduct);
         } catch (IllegalArgumentException e) {
             // Catches the duplicate SKU error
@@ -69,7 +42,7 @@ public class AdminProductController {
             @RequestParam java.math.BigDecimal newPrice) {
 
         try {
-            Product updatedProduct = adminService.updatePrice(sku, newPrice, adminUser);
+            com.localcommerce.delivery.dto.ProductDTO updatedProduct = adminService.updatePrice(sku, newPrice, adminUser);
 
             return ResponseEntity.ok(java.util.Map.of(
                     "success", true,
@@ -92,7 +65,7 @@ public class AdminProductController {
             @RequestParam boolean isActive) {
 
         try {
-            Product updatedProduct = adminService.toggleActiveStatus(sku, isActive, adminUser);
+            com.localcommerce.delivery.dto.ProductDTO updatedProduct = adminService.toggleActiveStatus(sku, isActive, adminUser);
 
             return ResponseEntity.ok(java.util.Map.of(
                     "success", true,

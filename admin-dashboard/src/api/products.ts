@@ -14,8 +14,8 @@ export const productsApi = {
         return apiClient.patch<ApiResponse<any>>(`/api/admin/products/${sku}/price?newPrice=${newPrice}`);
     },
 
-    adjustStock: (sku: string, adjustmentAmount: number, reason: string) => {
-        return apiClient.patch<ApiResponse<any>>(`/api/admin/products/${sku}/stock?adjustmentAmount=${adjustmentAmount}&reason=${encodeURIComponent(reason)}`);
+    adjustStock: (inventoryId: number, newStock: number) => {
+        return apiClient.put<ApiResponse<any>>(`/api/admin/inventories/${inventoryId}/stock`, { stockQuantity: newStock });
     },
 
     toggleActive: (sku: string, isActive: boolean) => {

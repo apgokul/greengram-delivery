@@ -35,6 +35,7 @@ public class OrderService {
 
     private final CustomerRepository customerRepo;
     private final ProductRepository productRepo;
+    private final com.localcommerce.delivery.repository.InventoryRepository inventoryRepo;
     private final CustomerOrderRepository orderRepo;
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseAlertService warehouseAlertService;
@@ -53,6 +54,7 @@ public class OrderService {
 
     public OrderService(CustomerRepository customerRepo,
                         ProductRepository productRepo,
+                        com.localcommerce.delivery.repository.InventoryRepository inventoryRepo,
                         CustomerOrderRepository orderRepo,
                         WhatsAppOutboundClient outboundClient,
                         WarehouseAlertService warehouseAlertService,
@@ -61,6 +63,7 @@ public class OrderService {
                         PlatformTransactionManager transactionManager) {
         this.customerRepo = customerRepo;
         this.productRepo = productRepo;
+        this.inventoryRepo = inventoryRepo;
         this.orderRepo = orderRepo;
         this.outboundClient = outboundClient;
         this.warehouseAlertService = warehouseAlertService;
@@ -75,33 +78,62 @@ public class OrderService {
         // 1. Resolve identity gracefully
         Customer customer = customerIdentityService.resolveCustomerIdentity(bsuid, phoneNumber, whatsappName);
 
-        // 2. PASS 1: Validate stock for ALL items FIRST using Pessimistic Locks
-        // (Prevents deducting Item 1 if Item 2 fails stock check)
+        // 2. PASS 1: Validate stock for ALL items FIRST using Pessimistic Locks on Inventory
+        java.util.Map<Product, Integer> requestedProducts = new java.util.HashMap<>();
         for (CartItemDTO dto : cartItems) {
             if (dto.getQuantity() <= 0) {
                 return OrderProcessing.OrderProcessResult.failed("Sorry, invalid quantity requested.");
             }
 
-            java.util.Optional<Product> optProduct = productRepo.findBySkuForUpdate(dto.getSku());
-
+            java.util.Optional<Product> optProduct = productRepo.findBySku(dto.getSku());
             if (optProduct.isEmpty()) {
-                return OrderProcessing.OrderProcessResult.failed(
-                        "Sorry, one or more items in your cart are currently unavailable."
-                );
+                return OrderProcessing.OrderProcessResult.failed("Sorry, one or more items in your cart are currently unavailable.");
+            }
+            requestedProducts.put(optProduct.get(), dto.getQuantity());
+        }
+
+        java.util.List<com.localcommerce.delivery.model.Inventory> inventoriesToLock = requestedProducts.keySet().stream()
+                .map(Product::getInventory)
+                .distinct()
+                .sorted(java.util.Comparator.comparing(com.localcommerce.delivery.model.Inventory::getId))
+                .collect(java.util.stream.Collectors.toList());
+
+        for (com.localcommerce.delivery.model.Inventory inv : inventoriesToLock) {
+            inventoryRepo.findByIdForUpdate(inv.getId()).orElseThrow(
+                () -> new RuntimeException("Inventory no longer available")
+            );
+        }
+
+        java.util.Map<com.localcommerce.delivery.model.Inventory, BigDecimal> inventoryRequirements = new java.util.HashMap<>();
+        java.util.Map<com.localcommerce.delivery.model.Inventory, Product> representativeProducts = new java.util.HashMap<>();
+
+        for (java.util.Map.Entry<Product, Integer> entry : requestedProducts.entrySet()) {
+            Product product = entry.getKey();
+            Integer cartQty = entry.getValue();
+
+            if (!product.isActive()) {
+                return OrderProcessing.OrderProcessResult.failed("Sorry, " + product.getName() + " is currently out of stock.");
             }
 
-            Product product = optProduct.get();
+            BigDecimal itemPhysicalQty = product.getPackageQuantity().multiply(BigDecimal.valueOf(cartQty));
+            BigDecimal convertedQty = com.localcommerce.delivery.utils.UnitConverter.convert(itemPhysicalQty, product.getPackageUnit(), product.getInventory().getUnit());
 
-            if (!product.isActive() || product.getStockQuantity() <= 0) {
-                return OrderProcessing.OrderProcessResult.failed(
-                        "Sorry, " + product.getName() + " is currently out of stock."
-                );
+            inventoryRequirements.merge(product.getInventory(), convertedQty, BigDecimal::add);
+            representativeProducts.put(product.getInventory(), product);
+        }
+
+        for (java.util.Map.Entry<com.localcommerce.delivery.model.Inventory, BigDecimal> req : inventoryRequirements.entrySet()) {
+            com.localcommerce.delivery.model.Inventory inv = req.getKey();
+            com.localcommerce.delivery.model.Inventory lockedInv = inventoryRepo.findById(inv.getId()).get();
+            BigDecimal required = req.getValue();
+            Product repProduct = representativeProducts.get(inv);
+
+            if (lockedInv.getStockQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+                return OrderProcessing.OrderProcessResult.failed("Sorry, " + repProduct.getName() + " is currently out of stock.");
             }
 
-            if (product.getStockQuantity() < dto.getQuantity()) {
-                return OrderProcessing.OrderProcessResult.failed(
-                        "Sorry, " + product.getName() + " is currently unavailable in the requested quantity. Please try a smaller quantity."
-                );
+            if (lockedInv.getStockQuantity().compareTo(required) < 0) {
+                return OrderProcessing.OrderProcessResult.failed("Sorry, " + repProduct.getName() + " is currently unavailable in the requested quantity. Please try a smaller quantity.");
             }
         }
 
@@ -113,8 +145,7 @@ public class OrderService {
         BigDecimal initialCartTotal = BigDecimal.ZERO;
 
         for (CartItemDTO dto : cartItems) {
-            // Retrieve the locked product from the managed persistence context
-            Product product = productRepo.findBySkuForUpdate(dto.getSku()).get();
+            Product product = productRepo.findBySku(dto.getSku()).get();
 
             OrderItem item = new OrderItem();
             item.setProduct(product);
@@ -194,10 +225,10 @@ public class OrderService {
 
     public static class CheckoutResult {
         public final CustomerOrder order;
-        public final List<Product> lowStockProducts;
-        public CheckoutResult(CustomerOrder order, List<Product> lowStockProducts) {
+        public final List<com.localcommerce.delivery.model.Inventory> lowStockInventories;
+        public CheckoutResult(CustomerOrder order, List<com.localcommerce.delivery.model.Inventory> lowStockInventories) {
             this.order = order;
-            this.lowStockProducts = lowStockProducts;
+            this.lowStockInventories = lowStockInventories;
         }
     }
 
@@ -214,41 +245,59 @@ public class OrderService {
                 return null;
             }
 
-            java.util.List<Product> lowStockProducts = new java.util.ArrayList<>();
+            java.util.List<com.localcommerce.delivery.model.Inventory> lowStockInventories = new java.util.ArrayList<>();
+
+            java.util.List<com.localcommerce.delivery.model.Inventory> inventoriesToLock = order.getItems().stream()
+                    .map(item -> item.getProduct().getInventory())
+                    .distinct()
+                    .sorted(java.util.Comparator.comparing(com.localcommerce.delivery.model.Inventory::getId))
+                    .collect(java.util.stream.Collectors.toList());
+
+            for (com.localcommerce.delivery.model.Inventory inv : inventoriesToLock) {
+                inventoryRepo.findByIdForUpdate(inv.getId()).orElseThrow(
+                        () -> new com.localcommerce.delivery.exception.OrderValidationException("Sorry, one or more items in your cart are no longer available. Your order has not been placed. Please try again.")
+                );
+            }
+
+            java.util.Map<com.localcommerce.delivery.model.Inventory, BigDecimal> inventoryRequirements = new java.util.HashMap<>();
+            java.util.Map<com.localcommerce.delivery.model.Inventory, Product> representativeProducts = new java.util.HashMap<>();
 
             for (OrderItem item : order.getItems()) {
-                // Acquire a fresh pessimistic write lock on this product row.
-                // Blocks any concurrent finalizeOrderCheckout for the same product
-                // until this transaction commits or rolls back.
-                java.util.Optional<Product> optProduct = productRepo.findBySkuForUpdate(item.getProduct().getSku());
-                
-                if (optProduct.isEmpty()) {
-                    throw new com.localcommerce.delivery.exception.OrderValidationException(
-                            "Sorry, one or more items in your cart are no longer available. Your order has not been placed. Please try again.");
-                }
-
-                Product product = optProduct.get();
-
-                if (!product.isActive() || product.getStockQuantity() <= 0) {
+                Product product = item.getProduct();
+                if (!product.isActive()) {
                     throw new com.localcommerce.delivery.exception.OrderValidationException(
                             "Sorry, " + product.getName() + " is currently out of stock. Your order has not been placed. Please try again.");
                 }
 
-                // Re-verify stock is still sufficient after acquiring the lock.
-                // This closes the race window between processNewCart and finalizeOrderCheckout.
-                if (product.getStockQuantity() < item.getQuantity()) {
+                BigDecimal itemPhysicalQty = product.getPackageQuantity().multiply(BigDecimal.valueOf(item.getQuantity()));
+                BigDecimal convertedQty = com.localcommerce.delivery.utils.UnitConverter.convert(itemPhysicalQty, product.getPackageUnit(), product.getInventory().getUnit());
+
+                inventoryRequirements.merge(product.getInventory(), convertedQty, BigDecimal::add);
+                representativeProducts.put(product.getInventory(), product);
+            }
+
+            for (java.util.Map.Entry<com.localcommerce.delivery.model.Inventory, BigDecimal> req : inventoryRequirements.entrySet()) {
+                com.localcommerce.delivery.model.Inventory inv = req.getKey();
+                com.localcommerce.delivery.model.Inventory lockedInv = inventoryRepo.findById(inv.getId()).get();
+                BigDecimal required = req.getValue();
+                Product repProduct = representativeProducts.get(inv);
+
+                if (lockedInv.getStockQuantity().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new com.localcommerce.delivery.exception.OrderValidationException(
-                            "Sorry, " + product.getName() + " is currently unavailable in the " +
-                            "requested quantity. Your order has not been placed. Please try again.");
+                            "Sorry, " + repProduct.getName() + " is currently out of stock. Your order has not been placed. Please try again.");
                 }
 
-                // Safe to deduct — we hold the lock and sufficiency is confirmed
-                product.setStockQuantity(product.getStockQuantity() - item.getQuantity());
-
-                if (product.getStockQuantity() <= DeliveryConstants.LOW_STOCK_THRESHOLD) {
-                    lowStockProducts.add(product);
+                if (lockedInv.getStockQuantity().compareTo(required) < 0) {
+                    throw new com.localcommerce.delivery.exception.OrderValidationException(
+                            "Sorry, " + repProduct.getName() + " is currently unavailable in the requested quantity. Your order has not been placed. Please try again.");
                 }
-                productRepo.save(product);
+
+                lockedInv.setStockQuantity(lockedInv.getStockQuantity().subtract(required));
+                
+                if (lockedInv.getStockQuantity().compareTo(BigDecimal.valueOf(DeliveryConstants.LOW_STOCK_THRESHOLD)) <= 0) {
+                    lowStockInventories.add(lockedInv);
+                }
+                inventoryRepo.save(lockedInv);
             }
 
             order.advanceStateTo(OrderStatus.PENDING_WAREHOUSE);
@@ -257,7 +306,7 @@ public class OrderService {
             // Prevent LazyInitializationException outside the transaction boundary
             order.getCustomer().getWhatsappNumber();
 
-            return new CheckoutResult(order, lowStockProducts);
+            return new CheckoutResult(order, lowStockInventories);
         });
 
         if (result == null) {
@@ -265,8 +314,8 @@ public class OrderService {
         }
 
         // Network calls safely execute OUTSIDE the database transaction
-        for (Product product : result.lowStockProducts) {
-            warehouseAlertService.sendLowStockAlert(product);
+        for (com.localcommerce.delivery.model.Inventory inventory : result.lowStockInventories) {
+            warehouseAlertService.sendLowStockAlert(inventory);
         }
         warehouseAlertService.sendNewOrderAlert(result.order);
     }

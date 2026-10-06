@@ -6,15 +6,23 @@ import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
-import com.localcommerce.delivery.repository.ProductRepository;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
+import com.localcommerce.delivery.model.Inventory;
+import com.localcommerce.delivery.repository.InventoryRepository;
+import com.localcommerce.delivery.utils.UnitConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -23,8 +31,9 @@ public class WarehouseService {
 
     private final CustomerOrderRepository orderRepo;
     private final WhatsAppOutboundClient outboundClient;
-    private final ProductRepository productRepo;
+    private final InventoryRepository inventoryRepo;
     private final WarehouseAlertService warehouseAlertService;
+    private final TransactionTemplate transactionTemplate;
 
     // The single phone number sitting on your packing table
     @Value("${warehouse.phone.number}")
@@ -112,15 +121,37 @@ public class WarehouseService {
         CustomerOrder order = orderRepo.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
-        // 1. Restore the inventory for every item in the cart!
-        for (OrderItem item : order.getItems()) {
-            // Using the pessimistic lock to safely put stock back
-            Product product = productRepo.findBySkuForUpdate(item.getProduct().getSku())
-                    .orElseThrow(() -> new RuntimeException("Product missing: " + item.getProduct().getSku()));
+        // 1. Restore the inventory safely via TransactionTemplate
+        transactionTemplate.execute(status -> {
+            // Group the restoration quantities by Inventory
+            Map<Inventory, BigDecimal> inventoryRestorationMap = new HashMap<>();
+            for (OrderItem item : order.getItems()) {
+                Product product = item.getProduct();
+                Inventory inv = product.getInventory();
+                if (inv == null) continue;
 
-            product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
-            productRepo.save(product);
-        }
+                BigDecimal variantTotalQuantity = product.getPackageQuantity().multiply(BigDecimal.valueOf(item.getQuantity()));
+                BigDecimal restoredQuantityInBaseUnit = UnitConverter.convert(variantTotalQuantity, product.getPackageUnit(), inv.getUnit());
+
+                inventoryRestorationMap.merge(inv, restoredQuantityInBaseUnit, BigDecimal::add);
+            }
+
+            // Sort inventories by ID to prevent deadlocks
+            List<Inventory> inventoriesToRestore = inventoryRestorationMap.keySet().stream()
+                    .sorted(Comparator.comparing(Inventory::getId))
+                    .toList();
+
+            for (Inventory inv : inventoriesToRestore) {
+                Inventory lockedInv = inventoryRepo.findByIdForUpdate(inv.getId())
+                        .orElseThrow(() -> new RuntimeException("Inventory not found"));
+
+                BigDecimal quantityToRestore = inventoryRestorationMap.get(inv);
+                lockedInv.setStockQuantity(lockedInv.getStockQuantity().add(quantityToRestore));
+                inventoryRepo.save(lockedInv);
+            }
+            
+            return null;
+        });
 
         // 2. Cancel the order
         order.advanceStateTo(OrderStatus.CANCELLED);

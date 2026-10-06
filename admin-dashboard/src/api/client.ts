@@ -37,6 +37,19 @@ export const apiClient = {
             },
         });
         return handleResponse<T>(response);
+    },
+
+    async put<T>(path: string, body: any): Promise<T> {
+        const token = sessionStorage.getItem('adminToken');
+        const response = await fetch(`${BASE_URL}${path}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        return handleResponse<T>(response);
     }
 };
 

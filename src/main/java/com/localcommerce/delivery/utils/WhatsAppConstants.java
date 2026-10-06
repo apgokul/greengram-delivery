@@ -142,8 +142,8 @@ public class WhatsAppConstants {
             """
                     ⚠️ *LOW STOCK ALERT*
                     
-                    Item: %s (SKU: %s)
-                    Remaining Stock: %d units
+                    Inventory: %s
+                    Remaining: %s %s.
                     
                     Please restock soon to avoid missing sales.""";
 

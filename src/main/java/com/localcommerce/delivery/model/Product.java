@@ -29,13 +29,32 @@ public class Product {
     private String name;
     private BigDecimal currentPrice;
 
-    @Column(nullable = false)
-    private Integer stockQuantity;
+    @jakarta.persistence.ManyToOne(fetch = jakarta.persistence.FetchType.LAZY)
+    @jakarta.persistence.JoinColumn(name = "inventory_id")
+    private Inventory inventory;
 
-    private BigDecimal quantity;
+    private BigDecimal packageQuantity;
 
     @Enumerated(EnumType.STRING)
-    private ProductUnit unit;
+    private ProductUnit packageUnit;
+
+
+
+    public BigDecimal getQuantity() {
+        return packageQuantity;
+    }
+
+    public void setQuantity(BigDecimal quantity) {
+        this.packageQuantity = quantity;
+    }
+
+    public ProductUnit getUnit() {
+        return packageUnit;
+    }
+
+    public void setUnit(ProductUnit unit) {
+        this.packageUnit = unit;
+    }
 
     // NEW: The magic bullet for concurrency. Spring manages this automatically.
     @Version
@@ -46,9 +65,9 @@ public class Product {
     private boolean isActive;
 
     public String getDisplayName() {
-        if (quantity != null && unit != null) {
-            String unitStr = unit.name().equals("L") ? "L" : unit.name().toLowerCase();
-            return name + " — " + quantity.stripTrailingZeros().toPlainString() + " " + unitStr;
+        if (packageQuantity != null && packageUnit != null) {
+            String unitStr = packageUnit.name().equals("L") ? "L" : packageUnit.name().toLowerCase();
+            return name + " — " + packageQuantity.stripTrailingZeros().toPlainString() + " " + unitStr;
         }
         return name;
     }

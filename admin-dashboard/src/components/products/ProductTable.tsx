@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Product } from '../../types/product';
 
-type SortKey = 'name' | 'sku' | 'quantity' | 'currentPrice' | 'stockQuantity' | 'active';
+type SortKey = 'name' | 'sku' | 'packageQuantity' | 'currentPrice' | 'stockQuantity' | 'active';
 
 interface ProductTableProps {
     products: Product[];
@@ -34,8 +34,8 @@ export const ProductTable = ({
 
     const sortedProducts = useMemo(() => {
         const sorted = [...products].sort((a, b) => {
-            let valA: any = a[sortKey];
-            let valB: any = b[sortKey];
+            let valA: any = (a as any)[sortKey];
+            let valB: any = (b as any)[sortKey];
 
             // Handle string comparisons
             if (typeof valA === 'string' && typeof valB === 'string') {
@@ -51,10 +51,13 @@ export const ProductTable = ({
                 return sortDir === 'asc' ? numB - numA : numA - numB;
             }
 
-            // Handle undefined quantity gracefully (treat undefined as 0)
-            if (sortKey === 'quantity') {
-                valA = a.quantity || 0;
-                valB = b.quantity || 0;
+            // Handle nested objects and mapped keys
+            if (sortKey === 'stockQuantity') {
+                valA = a.inventory?.stockQuantity || 0;
+                valB = b.inventory?.stockQuantity || 0;
+            } else if (sortKey === 'packageQuantity') {
+                valA = a.packageQuantity || 0;
+                valB = b.packageQuantity || 0;
             }
 
             let result = 0;
@@ -63,8 +66,8 @@ export const ProductTable = ({
             
             // If primary sort is tied and we're sorting by name, sort by quantity ascending
             if (result === 0 && sortKey === 'name') {
-                const qA = a.quantity || 0;
-                const qB = b.quantity || 0;
+                const qA = a.packageQuantity || 0;
+                const qB = b.packageQuantity || 0;
                 return qA - qB;
             }
             
@@ -73,6 +76,20 @@ export const ProductTable = ({
 
         return sorted;
     }, [products, sortKey, sortDir]);
+
+    const groupedProducts = useMemo(() => {
+        const groups = new Map<number, Product[]>();
+        
+        sortedProducts.forEach(product => {
+            const inventoryId = product.inventory?.id ?? -1;
+            if (!groups.has(inventoryId)) {
+                groups.set(inventoryId, []);
+            }
+            groups.get(inventoryId)!.push(product);
+        });
+
+        return Array.from(groups.values());
+    }, [sortedProducts]);
 
     if (loading) {
         return (
@@ -106,81 +123,110 @@ export const ProductTable = ({
             <table className="data-table">
                 <thead>
                     <tr>
-                        <th style={{ width: '60px' }}>Sl. No.</th>
                         <th onClick={() => handleSort('name')} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                            Product {sortKey === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                            PRODUCT {sortKey === 'name' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                         </th>
+                        <th onClick={() => handleSort('stockQuantity')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                            STOCK {sortKey === 'stockQuantity' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                        </th>
+                        <th style={{ textAlign: 'center' }}>INVENTORY ACTIONS</th>
                         <th onClick={() => handleSort('sku')} style={{ cursor: 'pointer', userSelect: 'none' }}>
                             SKU {sortKey === 'sku' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                         </th>
-                        <th onClick={() => handleSort('quantity')} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                            Pack Size {sortKey === 'quantity' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                        <th onClick={() => handleSort('packageQuantity')} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                            PACK SIZE {sortKey === 'packageQuantity' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                         </th>
                         <th onClick={() => handleSort('currentPrice')} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                            Price (₹) {sortKey === 'currentPrice' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
-                        </th>
-                        <th onClick={() => handleSort('stockQuantity')} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                            Stock {sortKey === 'stockQuantity' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                            PRICE (₹) {sortKey === 'currentPrice' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                         </th>
                         <th onClick={() => handleSort('active')} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                            Status {sortKey === 'active' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
+                            STATUS {sortKey === 'active' ? (sortDir === 'asc' ? '↑' : '↓') : ''}
                         </th>
-                        <th style={{ textAlign: 'right' }}>Actions</th>
+                        <th style={{ textAlign: 'right' }}>VARIANT ACTIONS</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {sortedProducts.map((product, index) => (
-                        <tr key={product.sku}>
-                            <td style={{ color: 'var(--text-secondary)' }}>{index + 1}</td>
-                            <td style={{ fontWeight: 500 }}>{product.name}</td>
-                            <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{product.sku}</td>
-                            <td>
-                                {product.quantity && product.unit ? (
-                                    <span style={{ color: 'var(--text-secondary)' }}>
-                                        {Number(product.quantity)} {product.unit === 'L' ? 'L' : product.unit.toLowerCase()}
-                                    </span>
-                                ) : (
-                                    <span style={{ color: 'var(--text-secondary)', opacity: 0.5 }}>-</span>
-                                )}
-                            </td>
-                            <td>{product.currentPrice.toFixed(2)}</td>
-                            <td>
-                                <span style={{ 
-                                    fontWeight: 600,
-                                    color: product.stockQuantity === 0 ? 'var(--danger-color)' : 'inherit'
-                                }}>
-                                    {product.stockQuantity}
-                                </span>
-                            </td>
-                            <td>
-                                <span className={`badge ${product.active ? 'badge-success' : 'badge-neutral'}`}>
-                                    {product.active ? 'Active' : 'Inactive'}
-                                </span>
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
-                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                                    <button 
-                                        className="btn btn-secondary btn-sm"
-                                        onClick={() => onEditPrice(product)}
-                                    >
-                                        Edit Price
-                                    </button>
-                                    <button 
-                                        className="btn btn-secondary btn-sm"
-                                        onClick={() => onAdjustStock(product)}
-                                    >
-                                        Adjust Stock
-                                    </button>
-                                    <button 
-                                        className={`btn btn-sm ${product.active ? 'btn-danger' : 'btn-primary'}`}
-                                        onClick={() => onToggleActive(product)}
-                                    >
-                                        {product.active ? 'Deactivate' : 'Activate'}
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                    ))}
+                    {groupedProducts.map((group, groupIndex) => {
+                        const parent = group[0];
+                        const inventory = parent.inventory;
+                        const hasInventory = !!inventory;
+                        const rowSpan = group.length;
+                        
+                        return (
+                            <React.Fragment key={`group-${inventory?.id || groupIndex}`}>
+                                {group.map((product, productIndex) => {
+                                    const isLastChild = productIndex === group.length - 1;
+                                    return (
+                                        <tr 
+                                            key={product.sku}
+                                            style={{ borderBottom: isLastChild ? '1px solid var(--border-color)' : 'none' }}
+                                        >
+                                            {productIndex === 0 && (
+                                                <>
+                                                    <td rowSpan={rowSpan} style={{ fontWeight: 'bold', verticalAlign: 'middle' }}>
+                                                        {parent.name}
+                                                    </td>
+                                                    <td rowSpan={rowSpan} style={{ verticalAlign: 'middle' }}>
+                                                        <span style={{ 
+                                                            fontWeight: 600,
+                                                            color: (inventory?.stockQuantity ?? 0) === 0 ? 'var(--danger-color)' : 'inherit'
+                                                        }}>
+                                                            {inventory?.stockQuantity ?? 0} {inventory?.unit ?? ''}
+                                                        </span>
+                                                    </td>
+                                                    <td rowSpan={rowSpan} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                                        {hasInventory && (
+                                                            <button 
+                                                                className="btn btn-secondary btn-sm"
+                                                                onClick={() => onAdjustStock(parent)}
+                                                            >
+                                                                Adjust Stock
+                                                            </button>
+                                                        )}
+                                                    </td>
+                                                </>
+                                            )}
+                                            
+                                            <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', verticalAlign: 'middle' }}>
+                                                {product.sku}
+                                            </td>
+                                            <td style={{ color: 'var(--text-secondary)', verticalAlign: 'middle' }}>
+                                                {product.packageQuantity && product.packageUnit ? (
+                                                    <span>
+                                                        {Number(product.packageQuantity)} {product.packageUnit === 'L' ? 'L' : product.packageUnit.toLowerCase()}
+                                                    </span>
+                                                ) : (
+                                                    <span style={{ opacity: 0.5 }}>-</span>
+                                                )}
+                                            </td>
+                                            <td style={{ verticalAlign: 'middle' }}>{product.currentPrice.toFixed(2)}</td>
+                                            <td style={{ verticalAlign: 'middle' }}>
+                                                <span className={`badge ${product.active ? 'badge-success' : 'badge-neutral'}`}>
+                                                    {product.active ? 'Active' : 'Inactive'}
+                                                </span>
+                                            </td>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
+                                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                                    <button 
+                                                        className="btn btn-secondary btn-sm"
+                                                        onClick={() => onEditPrice(product)}
+                                                    >
+                                                        Edit Price
+                                                    </button>
+                                                    <button 
+                                                        className={`btn btn-sm ${product.active ? 'btn-danger' : 'btn-primary'}`}
+                                                        onClick={() => onToggleActive(product)}
+                                                    >
+                                                        {product.active ? 'Deactivate' : 'Activate'}
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </React.Fragment>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
