@@ -2,6 +2,7 @@ package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.model.InventoryAuditLog;
 import com.localcommerce.delivery.model.Product;
+import com.localcommerce.delivery.dto.CreateProductDTO;
 import com.localcommerce.delivery.dto.InventoryDTO;
 import com.localcommerce.delivery.dto.ProductDTO;
 import com.localcommerce.delivery.model.Inventory;
@@ -77,29 +78,65 @@ public class ProductAdminService {
         return convertToInventoryDTO(savedInventory);
     }
 
-    // Add this inside ProductAdminService.java
+    public List<InventoryDTO> getAllInventories() {
+        return inventoryRepo.findAll().stream()
+                .map(this::convertToInventoryDTO)
+                .toList();
+    }
 
     @Transactional
-    public ProductDTO createNewProduct(Product newProduct, String adminUser) {
+    public InventoryDTO createInventory(InventoryDTO payload, String adminUser) {
+        if (payload.getBaseSku() == null || payload.getUnit() == null) {
+            throw new IllegalArgumentException("baseSku and unit are required to create an inventory.");
+        }
+        
+        Inventory inv = new Inventory();
+        inv.setBaseSku(payload.getBaseSku());
+        inv.setUnit(payload.getUnit());
+        inv.setStockQuantity(java.math.BigDecimal.ZERO);
+        
+        Inventory saved = inventoryRepo.save(inv);
+        
+        log.info("🛡️ AUDIT: New Inventory {} created by {}.", saved.getBaseSku(), adminUser);
+        return convertToInventoryDTO(saved);
+    }
+
+    @Transactional
+    public ProductDTO createNewProduct(CreateProductDTO dto, String adminUser) {
+        if (dto.getInventoryId() == null) {
+            throw new IllegalArgumentException("inventoryId is required to create a new product.");
+        }
+        
+        Inventory parentInventory = inventoryRepo.findById(dto.getInventoryId())
+                .orElseThrow(() -> new IllegalArgumentException("Inventory with ID " + dto.getInventoryId() + " not found."));
+
         // 1. Prevent duplicate SKUs
-        if (productRepo.findBySku(newProduct.getSku()).isPresent()) {
-            throw new IllegalArgumentException("Product with SKU '" + newProduct.getSku() + "' already exists!");
+        if (productRepo.findBySku(dto.getSku()).isPresent()) {
+            throw new IllegalArgumentException("Product with SKU '" + dto.getSku() + "' already exists!");
         }
 
-        // 2. Save the new product
+        // 2. Map DTO to Product
+        Product newProduct = new Product();
+        newProduct.setSku(dto.getSku());
+        newProduct.setName(dto.getName());
+        newProduct.setCurrentPrice(dto.getCurrentPrice());
+        newProduct.setPackageQuantity(dto.getPackageQuantity());
+        newProduct.setPackageUnit(dto.getPackageUnit());
+        newProduct.setActive(dto.isActive());
+        newProduct.setInventory(parentInventory);
+
+        // 3. Save the new product
         Product savedProduct = productRepo.save(newProduct);
 
-        // 3. Log the initial inventory injection (if they started with stock > 0)
-        if (savedProduct.getInventory() != null && savedProduct.getInventory().getStockQuantity() != null && savedProduct.getInventory().getStockQuantity().compareTo(java.math.BigDecimal.ZERO) > 0) {
-            InventoryAuditLog auditLog = new InventoryAuditLog();
-            auditLog.setSku(savedProduct.getSku());
-            auditLog.setOldStock(0);
-            auditLog.setNewStock(savedProduct.getInventory().getStockQuantity().intValue());
-            auditLog.setChangeAmount(savedProduct.getInventory().getStockQuantity().intValue());
-            auditLog.setReason("INITIAL_PRODUCT_SETUP");
-            auditLog.setChangedBy(adminUser);
-            auditRepo.save(auditLog);
-        }
+        // 4. Log the initial setup (stock is managed via inventory now, but keeping log entry for product creation is good)
+        InventoryAuditLog auditLog = new InventoryAuditLog();
+        auditLog.setSku(savedProduct.getSku());
+        auditLog.setOldStock(0);
+        auditLog.setNewStock(parentInventory.getStockQuantity() != null ? parentInventory.getStockQuantity().intValue() : 0);
+        auditLog.setChangeAmount(0);
+        auditLog.setReason("INITIAL_PRODUCT_SETUP");
+        auditLog.setChangedBy(adminUser);
+        auditRepo.save(auditLog);
 
         log.info("🛡️ AUDIT: New product created: {} at ₹{}. User: {}",
                 savedProduct.getSku(), savedProduct.getCurrentPrice(), adminUser);

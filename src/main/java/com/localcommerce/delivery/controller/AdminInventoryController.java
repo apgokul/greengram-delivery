@@ -15,6 +15,24 @@ public class AdminInventoryController {
 
     private final ProductAdminService adminService;
 
+    @GetMapping
+    public ResponseEntity<?> getAllInventories(
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
+        return ResponseEntity.ok(adminService.getAllInventories());
+    }
+
+    @PostMapping
+    public ResponseEntity<?> createInventory(
+            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            @RequestBody InventoryDTO payload) {
+        try {
+            InventoryDTO created = adminService.createInventory(payload, adminUser);
+            return ResponseEntity.status(201).body(created);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @PutMapping("/{id}/stock")
     public ResponseEntity<?> updateStock(
             @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
