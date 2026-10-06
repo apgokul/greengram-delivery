@@ -87,9 +87,9 @@ public class WhatsAppConstants {
 
     public static final String DELIVERED_ALERT =
             "📦 *Order delivered!*\n\n" +
-                    "We hope you enjoy your groceries! 🌿\n\n" +
+                    "We hope you enjoy your groceries!\n\n" +
                     "If you have any questions or need help with your order, we're just a call away.\n\n" +
-                    "Thank you for choosing GreenGram. See you again soon! 😊";
+                    "Thank you for choosing *GreenGram*. See you again soon! 😊";
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 

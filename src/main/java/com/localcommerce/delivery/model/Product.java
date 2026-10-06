@@ -24,7 +24,7 @@ public class Product {
     private Long id;
 
     @Column(unique = true, nullable = false)
-    private String sku; // e.g., "RICE_ASHIRVAD_5KG"
+    private String sku; // e.g., "WHEAT_1KG"
 
     private String name;
     private BigDecimal currentPrice;
