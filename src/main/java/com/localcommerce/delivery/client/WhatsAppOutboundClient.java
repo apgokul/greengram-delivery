@@ -41,7 +41,9 @@ public class WhatsAppOutboundClient {
     /**
      * Option A: The "Reuse Location" Interactive Button
      */
-    public void sendReuseLocationPrompt(String toPhoneNumber, Long orderId) {
+    public void sendReuseLocationPrompt(String toPhoneNumber, Long orderId, String savedLocation) {
+
+        String promptText = String.format(WhatsAppConstants.REUSE_LOCATION_PROMPT, savedLocation);
 
         // Constructing the Meta Interactive Button JSON payload using Maps (or a DTO)
         Map<String, Object> body = Map.of(
@@ -50,7 +52,7 @@ public class WhatsAppOutboundClient {
                 WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
                 WhatsAppConstants.INTERACTIVE, Map.of(
                         WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
-                        WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, WhatsAppConstants.REUSE_LOCATION_PROMPT),
+                        WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, promptText),
                         WhatsAppConstants.ACTION, Map.of(
                                 WhatsAppConstants.BUTTONS, new Object[]{
                                         Map.of(
@@ -341,8 +343,8 @@ public class WhatsAppOutboundClient {
         interactive.put(WhatsAppConstants.TYPE, "catalog_message");
         interactive.put(WhatsAppConstants.BODY, Map.of(
                 WhatsAppConstants.TEXT,
-                "Welcome to GreenGram! 🛒\n\n" +
-                        "Your everyday groceries, made easy. 💚\n\n" +
+                "Welcome to *GreenGram!* 🛒\n\n" +
+                        "Your everyday groceries, made easy.\n\n" +
                         "Explore our products and place your order below. 👇"
         ));
         interactive.put(WhatsAppConstants.ACTION, Map.of("name", "catalog_message"));

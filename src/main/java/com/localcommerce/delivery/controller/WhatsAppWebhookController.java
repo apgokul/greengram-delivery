@@ -145,7 +145,8 @@ public class WhatsAppWebhookController {
 
                             // Check if we already have their location on file
                             if (customer.getLatitude() != null && customer.getLongitude() != null) {
-                                outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId());
+                                String savedLocation = String.format("https://maps.google.com/?q=%s,%s", customer.getLatitude(), customer.getLongitude());
+                                outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId(), savedLocation);
                             } else {
                                 outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
                             }
