@@ -58,7 +58,7 @@ public class WhatsAppConstants {
     // ==================== Message Templates ====================
     // Location confirmation prompt
     public static final String REUSE_LOCATION_PROMPT =
-            "🛒 We have your cart!\n\nShould we deliver to your saved default location?";
+            "🛒 We have your cart!\n\nShould we deliver to your saved default location?\n\n📍 %s";
     public static final String REUSE_LOCATION_YES_BUTTON = "✅ Yes, deliver here";
     public static final String REUSE_LOCATION_NEW_BUTTON = "📍 Send new location";
 
