@@ -61,7 +61,6 @@ public class BatchingService {
             // Fire ALERT 2 to the customer
             outboundClient.sendOutForDeliveryAlert(
                     order.getCustomer().getWhatsappNumber(),
-                    "Our Rider", // You can map this dynamically later based on the phone number
                     run.getRiderPhoneNumber(),
                     "45" // Same-day ETA
             );

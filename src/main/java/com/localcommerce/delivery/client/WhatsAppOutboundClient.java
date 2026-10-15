@@ -16,8 +16,13 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import lombok.extern.slf4j.Slf4j;
 
+import com.localcommerce.delivery.model.OrderItem;
+
+import java.math.BigDecimal;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -159,10 +164,10 @@ public class WhatsAppOutboundClient {
     /**
      * ALERT : Out for Delivery (Triggered by Routing Engine)
      */
-    public void sendOutForDeliveryAlert(String toPhoneNumber, String riderName, String riderPhone, String etaMins) {
+    public void sendOutForDeliveryAlert(String toPhoneNumber, String riderPhone, String etaMins) {
         String message = String.format(
                 WhatsAppConstants.OUT_FOR_DELIVERY_ALERT_TEMPLATE,
-                riderName, etaMins, riderPhone
+                etaMins, riderPhone
         );
         sendTextUpdate(toPhoneNumber, message);
     }
@@ -175,19 +180,8 @@ public class WhatsAppOutboundClient {
         sendTextUpdate(toPhoneNumber, message);
     }
 
-    public void sendOrderSummaryPrompt(String toPhoneNumber, com.localcommerce.delivery.model.CustomerOrder order) {
-
-        // Calculate the grand total to display
-        java.math.BigDecimal grandTotal = order.getTotalAmount();
-
-        String itemList = order.getItems().stream()
-                .map(item -> "▪️ " + item.getQuantity() + "x " + item.getProduct().getDisplayName())
-                .collect(java.util.stream.Collectors.joining("\n"));
-
-        String bodyText = String.format(
-                WhatsAppConstants.ORDER_SUMMARY,
-                itemList, order.getTotalAmount().toString()
-        );
+    public void sendOrderSummaryPrompt(String toPhoneNumber, CustomerOrder order) {
+        String bodyText = buildOrderSummaryBody(order);
 
         Map<String, Object> body = Map.of(
                 WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
@@ -210,6 +204,59 @@ public class WhatsAppOutboundClient {
                 )
         );
         sendPostRequest(body);
+    }
+
+    public String buildOrderSummaryBody(CustomerOrder order) {
+        String itemList = formatItemList(order.getItems());
+
+        BigDecimal grandTotal = order.getTotalAmount();
+        if (grandTotal == null && order.getItems() != null) {
+            grandTotal = order.getItems().stream()
+                    .map(item -> {
+                        BigDecimal price = item.getLockedPrice() != null
+                                ? item.getLockedPrice()
+                                : (item.getProduct() != null && item.getProduct().getCurrentPrice() != null
+                                        ? item.getProduct().getCurrentPrice()
+                                        : BigDecimal.ZERO);
+                        int qty = item.getQuantity() != null ? item.getQuantity() : 0;
+                        return price.multiply(BigDecimal.valueOf(qty));
+                    })
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+        if (grandTotal == null) {
+            grandTotal = BigDecimal.ZERO;
+        }
+
+        String formattedGrandTotal = String.format(Locale.ROOT, "%.2f", grandTotal);
+
+        return String.format(
+                WhatsAppConstants.ORDER_SUMMARY,
+                itemList, formattedGrandTotal
+        );
+    }
+
+    public String formatItemList(List<OrderItem> items) {
+        if (items == null) {
+            return "";
+        }
+        return items.stream()
+                .map(item -> {
+                    int quantity = item.getQuantity() != null ? item.getQuantity() : 0;
+                    String productName = "";
+                    if (item.getProduct() != null) {
+                        productName = item.getProduct().getDisplayName() != null
+                                ? item.getProduct().getDisplayName()
+                                : (item.getProduct().getName() != null ? item.getProduct().getName() : "");
+                    }
+                    BigDecimal unitPrice = item.getLockedPrice() != null
+                            ? item.getLockedPrice()
+                            : (item.getProduct() != null && item.getProduct().getCurrentPrice() != null
+                                    ? item.getProduct().getCurrentPrice()
+                                    : BigDecimal.ZERO);
+                    BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
+                    return String.format(Locale.ROOT, "%d x %s - ₹%.2f", quantity, productName, lineTotal);
+                })
+                .collect(Collectors.joining("\n"));
     }
 
     public void sendTextUpdate(String toPhoneNumber, String messageText) {
