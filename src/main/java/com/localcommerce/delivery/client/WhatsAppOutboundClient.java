@@ -159,10 +159,10 @@ public class WhatsAppOutboundClient {
     /**
      * ALERT : Out for Delivery (Triggered by Routing Engine)
      */
-    public void sendOutForDeliveryAlert(String toPhoneNumber, String riderName, String riderPhone, String etaMins) {
+    public void sendOutForDeliveryAlert(String toPhoneNumber, String riderPhone, String etaMins) {
         String message = String.format(
                 WhatsAppConstants.OUT_FOR_DELIVERY_ALERT_TEMPLATE,
-                riderName, etaMins, riderPhone
+                etaMins, riderPhone
         );
         sendTextUpdate(toPhoneNumber, message);
     }

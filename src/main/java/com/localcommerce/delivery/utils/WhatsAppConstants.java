@@ -83,7 +83,7 @@ public class WhatsAppConstants {
                     "We'll notify you as soon as it's *out for delivery.*\n";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
-            "🛵 *Out for Delivery!*\n\nOur rider, %s, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
+            "🛵 *Out for Delivery!*\n\nOur rider, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
 
     public static final String DELIVERED_ALERT =
             "📦 *Order delivered!*\n\n" +
@@ -149,11 +149,15 @@ public class WhatsAppConstants {
 
     public static final String ORDER_SUMMARY =
             """
-                    🛒 *Order Summary*\n\n
-                    %s\n\n
-                    ---------------------------\n
-                    💰 *Grand Total: ₹%s*\n\n
-                    Tap below to confirm your order!""";
+            🧾 *Order Invoice*
+            
+            *Items:*
+            %s
+            
+            ---------------------------
+            💰 *Grand Total: ₹%s*
+            
+            Tap below to confirm your order!""";
 
 }
 
