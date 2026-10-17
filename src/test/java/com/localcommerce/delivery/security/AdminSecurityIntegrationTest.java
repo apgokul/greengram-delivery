@@ -117,4 +117,25 @@ public class AdminSecurityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(header().exists("Access-Control-Allow-Origin"));
     }
+
+    @Test
+    public void testAdminMessagesEndpointProtectedByJwt() throws Exception {
+        // 1. Missing token -> forbidden
+        mockMvc.perform(get("/api/admin/messages/chats"))
+                .andExpect(status().isForbidden());
+
+        // 2. Obtain valid token
+        String response = mockMvc.perform(post("/api/admin/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testadmin\", \"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String token = response.split("\"token\":\"")[1].split("\"")[0];
+
+        // 3. Valid token -> OK
+        mockMvc.perform(get("/api/admin/messages/chats")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+    }
 }

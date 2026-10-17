@@ -46,7 +46,8 @@ class WhatsAppWebhookControllerTest {
     private WarehouseService warehouseService;
     @Mock
     private BatchingService batchingService;
-
+    @Mock
+    private com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
 
     @InjectMocks
     private WhatsAppWebhookController controller;
@@ -370,6 +371,143 @@ class WhatsAppWebhookControllerTest {
                   ]
                 }
                 """.formatted(fromNumber, text);
+    }
+
+    @Test
+    void testReceiveMessage_LogsInboundMessage() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messaging_product": "whatsapp",
+                            "messages": [
+                              {
+                                "id": "wamid.test999",
+                                "from": "919876543210",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                any(),
+                eq("wamid.test999")
+        );
+    }
+
+    @Test
+    void testReceiveMessage_InboundDuplicateLogDoesNotBlockProcessing() throws Exception {
+        String payload = createTextPayload("Hi", "919876543210");
+        String signature = generateSignature(payload);
+
+        doThrow(new org.springframework.dao.DataIntegrityViolationException("Duplicate key"))
+                .when(loggingService).logInbound(any(), any(), any(), any());
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Catalog processing must still continue despite log failure
+        verify(outboundClient).sendCatalogMessage("919876543210");
+    }
+
+    @Test
+    void testReceiveMessage_InboundGenericLogFailureDoesNotBlockProcessing() throws Exception {
+        String payload = createTextPayload("Hi", "919876543210");
+        String signature = generateSignature(payload);
+
+        doThrow(new RuntimeException("Database offline"))
+                .when(loggingService).logInbound(any(), any(), any(), any());
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Catalog processing must still continue despite log failure
+        verify(outboundClient).sendCatalogMessage("919876543210");
+    }
+
+    @Test
+    void testReceiveMessage_PureBsuidWebhookPreservesIdentifierInboundAndOutbound() throws Exception {
+        String bsuid = "bsuid.user_1042_abc";
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messaging_product": "whatsapp",
+                            "contacts": [
+                              {
+                                "user_id": "%s",
+                                "profile": {
+                                  "name": "Jane Doe"
+                                }
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "id": "wamid.bsuid123",
+                                "from": "%s",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(bsuid, bsuid);
+
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Inbound log must preserve the exact BSUID
+        verify(loggingService).logInbound(
+                eq(bsuid),
+                any(),
+                any(),
+                eq("wamid.bsuid123")
+        );
+
+        // Outbound reply must use the exact BSUID
+        verify(outboundClient).sendCatalogMessage(eq(bsuid));
     }
 }
 

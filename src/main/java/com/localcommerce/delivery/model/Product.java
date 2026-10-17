@@ -67,7 +67,7 @@ public class Product {
     public String getDisplayName() {
         if (packageQuantity != null && packageUnit != null) {
             String unitStr = packageUnit.name().equals("L") ? "L" : packageUnit.name().toLowerCase();
-            return name + " — " + packageQuantity.stripTrailingZeros().toPlainString() + " " + unitStr;
+            return name + " – " + packageQuantity.stripTrailingZeros().toPlainString() + " " + unitStr;
         }
         return name;
     }
