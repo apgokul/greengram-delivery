@@ -8,16 +8,28 @@ import com.localcommerce.delivery.service.SmsFallbackService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.ResponseEntity;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class WhatsAppOutboundClientTest {
@@ -51,7 +63,7 @@ class WhatsAppOutboundClientTest {
 
         String formatted = outboundClient.formatItemList(List.of(item));
 
-        assertEquals("2 x Chilli Powder (500g) - ₹220.00", formatted);
+        assertEquals("2 x Chilli Powder (500g): ₹220.00", formatted);
     }
 
     @Test
@@ -76,7 +88,7 @@ class WhatsAppOutboundClientTest {
 
         String formatted = outboundClient.formatItemList(List.of(item1, item2));
 
-        String expected = "2 x Chilli Powder (500g) - ₹220.00\n1 x Tata Salt - ₹28.00";
+        String expected = "2 x Chilli Powder (500g): ₹220.00\n1 x Tata Salt: ₹28.00";
         assertEquals(expected, formatted);
     }
 
@@ -94,7 +106,7 @@ class WhatsAppOutboundClientTest {
 
         String formatted = outboundClient.formatItemList(List.of(item));
 
-        assertEquals("2 x Chilli Powder — 500 g - ₹220.00", formatted);
+        assertEquals("2 x Chilli Powder – 500 g: ₹220.00", formatted);
     }
 
     @Test
@@ -110,7 +122,7 @@ class WhatsAppOutboundClientTest {
 
         String formatted = outboundClient.formatItemList(List.of(item));
 
-        assertEquals("3 x Turmeric - ₹150.00", formatted);
+        assertEquals("3 x Turmeric: ₹150.00", formatted);
     }
 
     @Test
@@ -137,7 +149,7 @@ class WhatsAppOutboundClientTest {
         String summary = outboundClient.buildOrderSummaryBody(order);
 
         assertTrue(summary.contains("🧾 *Order Invoice*"));
-        assertTrue(summary.contains("*Items:*\n2 x Chilli Powder (500g) - ₹220.00"));
+        assertTrue(summary.contains("*Items:*\n2 x Chilli Powder (500g): ₹220.00"));
         assertTrue(summary.contains("💰 *Grand Total: ₹220.00*"));
         assertTrue(summary.contains("Tap below to confirm your order!"));
     }
@@ -209,5 +221,43 @@ class WhatsAppOutboundClientTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq(String.class)
         );
+    }
+
+    @Test
+    void testSendTextUpdate_LogsOutboundWithIstTimestamp_IndependentOfHostJvmDefaultTimezone() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(
+                eq("http://meta-api"),
+                any(),
+                eq(String.class)
+        )).thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        // Fixed instant: 2026-10-18 10:30:00 UTC -> 2026-10-18 16:00:00 IST
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        Clock fixedClock = Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata"));
+        outboundClient.setClock(fixedClock);
+
+        // Temporarily change host JVM default timezone to UTC or America/New_York
+        TimeZone originalDefault = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"));
+
+            outboundClient.sendTextUpdate("919876543210", "Order out for delivery!");
+
+            ArgumentCaptor<LocalDateTime> timestampCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+            verify(loggingService).logOutbound(
+                    eq("919876543210"),
+                    eq("Order out for delivery!"),
+                    timestampCaptor.capture()
+            );
+
+            LocalDateTime loggedTime = timestampCaptor.getValue();
+            assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), loggedTime,
+                    "Outbound log timestamp must be 16:00:00 IST regardless of JVM default timezone");
+        } finally {
+            TimeZone.setDefault(originalDefault);
+        }
     }
 }

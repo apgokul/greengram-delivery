@@ -21,6 +21,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -51,12 +54,40 @@ public class WhatsAppWebhookController {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
     public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService, com.localcommerce.delivery.service.WhatsAppLoggingService loggingService) {
         this.orderService = orderService;
         this.outboundClient = outboundClient;
         this.warehouseService = warehouseService;
         this.batchingService = batchingService;
         this.loggingService = loggingService;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
+
+    LocalDateTime parseMetaTimestampToIst(String rawTimestamp) {
+        if (rawTimestamp == null || rawTimestamp.isBlank()) {
+            log.warn("Missing Meta message timestamp; falling back to current IST time");
+            return LocalDateTime.now(clock);
+        }
+        try {
+            long epochSeconds = Long.parseLong(rawTimestamp.trim());
+            return Instant.ofEpochSecond(epochSeconds)
+                    .atZone(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                    .toLocalDateTime();
+        } catch (NumberFormatException e) {
+            log.warn("Malformed Meta message timestamp '{}'; falling back to current IST time", rawTimestamp);
+            return LocalDateTime.now(clock);
+        } catch (Exception e) {
+            log.warn("Error converting Meta timestamp '{}' to IST: {}; falling back to current IST time", rawTimestamp, e.getMessage());
+            return LocalDateTime.now(clock);
+        }
     }
 
     @GetMapping("/whatsapp")
@@ -123,7 +154,8 @@ public class WhatsAppWebhookController {
                     // 1.1 Inbound message logging hook: isolated so persistence failure does not block business handling
                     try {
                         String loggedBody = loggingService.formatInboundMessage(message);
-                        loggingService.logInbound(phoneNumber, loggedBody, java.time.LocalDateTime.now(), message.getId());
+                        LocalDateTime messageTimestamp = parseMetaTimestampToIst(message.getTimestamp());
+                        loggingService.logInbound(phoneNumber, loggedBody, messageTimestamp, message.getId());
                     } catch (org.springframework.dao.DataIntegrityViolationException e) {
                         log.info("Duplicate inbound WhatsApp message skipped due to unique constraint: externalMessageId={}", message.getId());
                     } catch (Exception e) {

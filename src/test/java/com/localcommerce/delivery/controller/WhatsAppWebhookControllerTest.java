@@ -20,6 +20,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -508,6 +512,131 @@ class WhatsAppWebhookControllerTest {
 
         // Outbound reply must use the exact BSUID
         verify(outboundClient).sendCatalogMessage(eq(bsuid));
+    }
+
+    private String createTextPayloadWithTimestamp(String text, String fromNumber, String timestamp) {
+        String tsField = timestamp != null ? "\"timestamp\": \"%s\",".formatted(timestamp) : "";
+        return """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messaging_product": "whatsapp",
+                            "messages": [
+                              {
+                                "id": "wamid.msg123",
+                                "from": "%s",
+                                %s
+                                "type": "text",
+                                "text": {
+                                  "body": "%s"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(fromNumber, tsField, text);
+    }
+
+    @Test
+    void testReceiveMessage_ConvertsMetaTimestampToCorrectIstTime() throws Exception {
+        // Meta timestamp 1729247400 is 2024-10-18T10:30:00Z -> 2024-10-18T16:00:00 in IST (+05:30)
+        String payload = createTextPayloadWithTimestamp("Hi", "919876543210", "1729247400");
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<LocalDateTime> timestampCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                timestampCaptor.capture(),
+                eq("wamid.msg123")
+        );
+
+        assertEquals(LocalDateTime.of(2024, 10, 18, 16, 0, 0), timestampCaptor.getValue());
+    }
+
+    @Test
+    void testReceiveMessage_MissingMetaTimestampFallsBackToIstClockWithoutFailing() throws Exception {
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        controller.setClock(Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata")));
+
+        // Payload with no timestamp field
+        String payload = createTextPayloadWithTimestamp("Hi", "919876543210", null);
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<LocalDateTime> timestampCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                timestampCaptor.capture(),
+                eq("wamid.msg123")
+        );
+
+        // Fallback should be 16:00:00 IST for the fixed instant
+        assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), timestampCaptor.getValue());
+        verify(outboundClient).sendCatalogMessage("919876543210");
+    }
+
+    @Test
+    void testReceiveMessage_MalformedMetaTimestampFallsBackToIstClockWithoutFailing() throws Exception {
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        controller.setClock(Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata")));
+
+        String payload = createTextPayloadWithTimestamp("Hi", "919876543210", "malformed_epoch_seconds");
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<LocalDateTime> timestampCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                timestampCaptor.capture(),
+                eq("wamid.msg123")
+        );
+
+        assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), timestampCaptor.getValue());
+        verify(outboundClient).sendCatalogMessage("919876543210");
+    }
+
+    @Test
+    void testParseMetaTimestampToIst_UnitCases() {
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        controller.setClock(Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata")));
+
+        // Valid timestamp
+        assertEquals(LocalDateTime.of(2024, 10, 18, 16, 0, 0),
+                controller.parseMetaTimestampToIst("1729247400"));
+
+        // Null, blank, malformed
+        assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0),
+                controller.parseMetaTimestampToIst(null));
+        assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0),
+                controller.parseMetaTimestampToIst("   "));
+        assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0),
+                controller.parseMetaTimestampToIst("invalid_seconds"));
     }
 }
 

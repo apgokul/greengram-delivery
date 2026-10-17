@@ -1,9 +1,15 @@
 package com.localcommerce.delivery.utils;
 
+import java.time.ZoneId;
+
 public class WhatsAppConstants {
     private WhatsAppConstants() {
         throw new AssertionError("Utility class should not be instantiated");
     }
+
+    // ==================== Timezone Contract ====================
+    public static final ZoneId ASIA_KOLKATA_ZONE = ZoneId.of("Asia/Kolkata");
+    public static final ZoneId BUSINESS_ZONE = ASIA_KOLKATA_ZONE;
 
     // ==================== Button Prefixes ====================
     // Customer interaction button prefixes

@@ -66,6 +66,7 @@ public class WhatsAppWebhookPayload {
     public static class Message {
         private String from; // The sender's phone number
         private String id;
+        private String timestamp; // Meta Unix epoch seconds
         private String type; // Will be "order", "interactive", or "location"
 
         private OrderPayload order;
