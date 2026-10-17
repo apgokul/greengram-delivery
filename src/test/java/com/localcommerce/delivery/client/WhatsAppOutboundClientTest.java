@@ -28,11 +28,14 @@ class WhatsAppOutboundClientTest {
     @Mock
     private SmsFallbackService smsFallbackService;
 
+    @Mock
+    private com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
+
     private WhatsAppOutboundClient outboundClient;
 
     @BeforeEach
     void setUp() {
-        outboundClient = new WhatsAppOutboundClient(restTemplate, smsFallbackService);
+        outboundClient = new WhatsAppOutboundClient(restTemplate, smsFallbackService, loggingService);
     }
 
     @Test
@@ -137,5 +140,74 @@ class WhatsAppOutboundClientTest {
         assertTrue(summary.contains("*Items:*\n2 x Chilli Powder (500g) - ₹220.00"));
         assertTrue(summary.contains("💰 *Grand Total: ₹220.00*"));
         assertTrue(summary.contains("Tap below to confirm your order!"));
+    }
+
+    @Test
+    void testSendTextUpdate_LogsOutboundOnHttpSuccess() {
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        org.mockito.Mockito.when(restTemplate.postForEntity(
+                org.mockito.ArgumentMatchers.eq("http://meta-api"),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(String.class)
+        )).thenReturn(org.springframework.http.ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendTextUpdate("919876543210", "Hello customer!");
+
+        org.mockito.Mockito.verify(loggingService).logOutbound(
+                org.mockito.ArgumentMatchers.eq("919876543210"),
+                org.mockito.ArgumentMatchers.eq("Hello customer!"),
+                org.mockito.ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    void testSendTextUpdate_DoesNotLogWhenHttpFails() {
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        org.mockito.Mockito.when(restTemplate.postForEntity(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(String.class)
+        )).thenThrow(new org.springframework.web.client.RestClientException("Meta API is down"));
+
+        try {
+            outboundClient.sendTextUpdate("919876543210", "Hello customer!");
+        } catch (Exception ignored) {
+        }
+
+        org.mockito.Mockito.verifyNoInteractions(loggingService);
+    }
+
+    @Test
+    void testSendTextUpdate_LoggingPersistenceFailureDoesNotPropagate() {
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        org.springframework.test.util.ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        org.mockito.Mockito.when(restTemplate.postForEntity(
+                org.mockito.ArgumentMatchers.eq("http://meta-api"),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(String.class)
+        )).thenReturn(org.springframework.http.ResponseEntity.ok("{\"success\":true}"));
+
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("Simulated DB error"))
+                .when(loggingService).logOutbound(
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any(),
+                        org.mockito.ArgumentMatchers.any()
+                );
+
+        // Crucial requirement: outbound logging failure must not throw or propagate out of sendTextUpdate
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() ->
+                outboundClient.sendTextUpdate("919876543210", "Hello customer!")
+        );
+
+        org.mockito.Mockito.verify(restTemplate, org.mockito.Mockito.times(1)).postForEntity(
+                org.mockito.ArgumentMatchers.eq("http://meta-api"),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(String.class)
+        );
     }
 }

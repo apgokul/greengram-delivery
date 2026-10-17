@@ -42,6 +42,7 @@ public class WhatsAppOutboundClient {
 
     private final RestTemplate restTemplate;
     private final SmsFallbackService smsFallbackService;
+    private final com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
 
     /**
      * Option A: The "Reuse Location" Interactive Button
@@ -79,7 +80,8 @@ public class WhatsAppOutboundClient {
                 )
         );
 
-        sendPostRequest(body);
+        String loggedDescription = promptText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]";
+        sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
     /**
@@ -93,7 +95,7 @@ public class WhatsAppOutboundClient {
                 WhatsAppConstants.TEXT, Map.of(WhatsAppConstants.BODY, WhatsAppConstants.LOCATION_REQUEST_PROMPT)
         );
 
-        sendPostRequest(body);
+        sendPostRequest(toPhoneNumber, WhatsAppConstants.LOCATION_REQUEST_PROMPT, body);
     }
 
     public void sendPendingOrdersList(String toPhoneNumber, List<CustomerOrder> pendingOrders) {
@@ -138,7 +140,8 @@ public class WhatsAppOutboundClient {
                 )
         );
 
-        sendPostRequest(body);
+        String loggedDescription = bodyText + "\n[List Options: " + limit + " orders presented]";
+        sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
     // Helper method to execute the HTTP call
@@ -146,17 +149,27 @@ public class WhatsAppOutboundClient {
             retryFor = {RestClientException.class},
             backoff = @Backoff(delay = 2000) // Wait 2 seconds between tries
     )
-    private void sendPostRequest(Map<String, Object> payload) {
+    private void sendPostRequest(String toPhoneNumber, String loggedDescription, Map<String, Object> payload) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(accessToken);
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
         // --- TEMPORARY MUTE FOR LOCAL TESTING ---
-        restTemplate.postForEntity(apiUrl, request, String.class);
-
+        org.springframework.http.ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, request, String.class);
 
         log.info("Successfully sent payload to Meta API.");
+
+        // Safe outbound logging hook:
+        // ONLY executes if postForEntity returned without throwing RestClientException.
+        // Persistence failure is caught here so it never propagates into @Retryable or the caller's business transaction.
+        if (response != null && (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().value() == 200)) {
+            try {
+                loggingService.logOutbound(toPhoneNumber, loggedDescription, java.time.LocalDateTime.now());
+            } catch (Exception e) {
+                log.error("Failed to persist outbound WhatsApp message log for phone {}: {}", toPhoneNumber, e.getMessage());
+            }
+        }
     }
 
     // Inside com.localcommerce.delivery.client.WhatsAppOutboundClient
@@ -203,7 +216,8 @@ public class WhatsAppOutboundClient {
                         )
                 )
         );
-        sendPostRequest(body);
+        String loggedDescription = bodyText + "\n[Button: ✅ Confirm Order]";
+        sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
     public String buildOrderSummaryBody(CustomerOrder order) {
@@ -267,7 +281,7 @@ public class WhatsAppOutboundClient {
                 WhatsAppConstants.TEXT, Map.of(WhatsAppConstants.BODY, messageText)
         );
 
-        sendPostRequest(body);
+        sendPostRequest(toPhoneNumber, messageText, body);
     }
 
     public void sendBagReadyPrompt(String toPhoneNumber, CustomerOrder order) {
@@ -298,7 +312,8 @@ public class WhatsAppOutboundClient {
                 )
         );
 
-        sendPostRequest(body);
+        String loggedDescription = dynamicBodyText + "\n[Button: " + WhatsAppConstants.BAG_READY_BUTTON_TITLE + "]";
+        sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
     @Recover
@@ -377,7 +392,8 @@ public class WhatsAppOutboundClient {
                 )
         );
 
-        sendPostRequest(body);
+        String loggedDescription = bodyText + "\n[Button: ✅ Marked Delivered]";
+        sendPostRequest(riderPhoneNumber, loggedDescription, body);
     }
 
     public void sendCatalogMessage(String recipientId) {
@@ -406,6 +422,7 @@ public class WhatsAppOutboundClient {
         }
 
         log.info("Sending interactive catalog message to {}", recipientId);
-        sendPostRequest(payload);
+        String catalogDescription = "Welcome to *GreenGram!* 🛒\n\nYour everyday groceries, made easy.\n\nExplore our products and place your order below. 👇\n[Interactive Catalog: View Products Action]";
+        sendPostRequest(recipientId, catalogDescription, payload);
     }
 }

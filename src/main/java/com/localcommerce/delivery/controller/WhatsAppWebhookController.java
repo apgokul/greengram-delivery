@@ -47,14 +47,16 @@ public class WhatsAppWebhookController {
     private final WhatsAppOutboundClient outboundClient;
     private final WarehouseService warehouseService;
     private final BatchingService batchingService;
+    private final com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService) {
+    public WhatsAppWebhookController(OrderService orderService, WhatsAppOutboundClient outboundClient, WarehouseService warehouseService, BatchingService batchingService, com.localcommerce.delivery.service.WhatsAppLoggingService loggingService) {
         this.orderService = orderService;
         this.outboundClient = outboundClient;
         this.warehouseService = warehouseService;
         this.batchingService = batchingService;
+        this.loggingService = loggingService;
     }
 
     @GetMapping("/whatsapp")
@@ -101,10 +103,8 @@ public class WhatsAppWebhookController {
                     // Branch A: inbound customer messages (orders, texts, locations, button taps)
                     WhatsAppWebhookPayload.Message message = value.getMessages().getFirst();
 
-                    // 1. Extract Phone Number
-                    String phoneNumber = message.getFrom();
-
-                    // 2. Extract Contact Info safely
+                    // 1. Extract Contact Info & Sender Identifiers safely
+                    String rawFrom = message.getFrom();
                     String bsuid = null;
                     String whatsappName = "Valued Customer";
 
@@ -116,8 +116,19 @@ public class WhatsAppWebhookController {
                         }
                     }
 
-                    // Fallback: If BSUID isn't present (e.g. in legacy tests), use phone number as target ID
+                    // Consistent customer identifier: use phone number if present, otherwise fallback to BSUID
+                    String phoneNumber = (rawFrom != null && !rawFrom.isBlank()) ? rawFrom : bsuid;
                     String primaryCustomerKey = (bsuid != null && !bsuid.isBlank()) ? bsuid : phoneNumber;
+
+                    // 1.1 Inbound message logging hook: isolated so persistence failure does not block business handling
+                    try {
+                        String loggedBody = loggingService.formatInboundMessage(message);
+                        loggingService.logInbound(phoneNumber, loggedBody, java.time.LocalDateTime.now(), message.getId());
+                    } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                        log.info("Duplicate inbound WhatsApp message skipped due to unique constraint: externalMessageId={}", message.getId());
+                    } catch (Exception e) {
+                        log.error("Failed to persist inbound WhatsApp message log for phone {}: {}", phoneNumber, e.getMessage());
+                    }
 
                     // Set context thread for logging
                     UserContext.setSenderId(primaryCustomerKey);
