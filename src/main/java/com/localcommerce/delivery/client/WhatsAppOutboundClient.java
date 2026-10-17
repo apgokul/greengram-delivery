@@ -268,7 +268,7 @@ public class WhatsAppOutboundClient {
                                     ? item.getProduct().getCurrentPrice()
                                     : BigDecimal.ZERO);
                     BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
-                    return String.format(Locale.ROOT, "%d x %s - ₹%.2f", quantity, productName, lineTotal);
+                    return String.format(Locale.ROOT, "%d x %s: ₹%.2f", quantity, productName, lineTotal);
                 })
                 .collect(Collectors.joining("\n"));
     }
