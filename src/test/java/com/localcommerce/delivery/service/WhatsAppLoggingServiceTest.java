@@ -12,8 +12,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -151,5 +155,53 @@ class WhatsAppLoggingServiceTest {
         // 5. Interactive button fallback when both title and id are missing
         buttonReply.setId("");
         assertEquals("[Button clicked]", loggingService.formatInboundMessage(btnMsg));
+    }
+
+    @Test
+    void testLogInbound_FallbackTimestamp_UsesIstClockIndependentOfJvmTimezone() {
+        when(repository.existsByExternalMessageId("wamid.fallback1")).thenReturn(false);
+
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        Clock fixedClock = Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata"));
+        loggingService.setClock(fixedClock);
+
+        TimeZone originalDefault = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+            loggingService.logInbound("919876543210", "Hello fallback", null, "wamid.fallback1");
+
+            ArgumentCaptor<WhatsAppMessageLog> captor = ArgumentCaptor.forClass(WhatsAppMessageLog.class);
+            verify(repository).save(captor.capture());
+
+            WhatsAppMessageLog saved = captor.getValue();
+            assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), saved.getTimestamp(),
+                    "Fallback timestamp must be 16:00:00 IST regardless of host JVM UTC timezone");
+        } finally {
+            TimeZone.setDefault(originalDefault);
+        }
+    }
+
+    @Test
+    void testLogOutbound_FallbackTimestamp_UsesIstClockIndependentOfJvmTimezone() {
+        Instant fixedInstant = Instant.parse("2026-10-18T10:30:00Z");
+        Clock fixedClock = Clock.fixed(fixedInstant, ZoneId.of("Asia/Kolkata"));
+        loggingService.setClock(fixedClock);
+
+        TimeZone originalDefault = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+
+            loggingService.logOutbound("919876543210", "Outbound fallback", null);
+
+            ArgumentCaptor<WhatsAppMessageLog> captor = ArgumentCaptor.forClass(WhatsAppMessageLog.class);
+            verify(repository).save(captor.capture());
+
+            WhatsAppMessageLog saved = captor.getValue();
+            assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), saved.getTimestamp(),
+                    "Fallback timestamp must be 16:00:00 IST regardless of host JVM UTC timezone");
+        } finally {
+            TimeZone.setDefault(originalDefault);
+        }
     }
 }

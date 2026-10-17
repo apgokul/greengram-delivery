@@ -6,10 +6,12 @@ import com.localcommerce.delivery.model.WhatsAppMessageLog;
 import com.localcommerce.delivery.repository.WhatsAppMessageLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.stream.Collectors;
 
@@ -19,6 +21,14 @@ import java.util.stream.Collectors;
 public class WhatsAppLoggingService {
 
     private final WhatsAppMessageLogRepository repository;
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
 
     /**
      * Persists an inbound customer message safely in an isolated transaction.
@@ -45,7 +55,7 @@ public class WhatsAppLoggingService {
                 .phoneNumber(phoneNumber)
                 .direction(MessageDirection.INBOUND)
                 .messageBody(messageBody != null ? messageBody : "")
-                .timestamp(timestamp != null ? timestamp : LocalDateTime.now())
+                .timestamp(timestamp != null ? timestamp : LocalDateTime.now(clock))
                 .build();
 
         repository.save(logEntry);
@@ -67,7 +77,7 @@ public class WhatsAppLoggingService {
                 .phoneNumber(phoneNumber)
                 .direction(MessageDirection.OUTBOUND)
                 .messageBody(messageBody != null ? messageBody : "")
-                .timestamp(timestamp != null ? timestamp : LocalDateTime.now())
+                .timestamp(timestamp != null ? timestamp : LocalDateTime.now(clock))
                 .build();
 
         repository.save(logEntry);

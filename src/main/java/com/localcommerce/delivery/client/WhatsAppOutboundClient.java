@@ -19,6 +19,8 @@ import lombok.extern.slf4j.Slf4j;
 import com.localcommerce.delivery.model.OrderItem;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -43,6 +45,14 @@ public class WhatsAppOutboundClient {
     private final RestTemplate restTemplate;
     private final SmsFallbackService smsFallbackService;
     private final com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
 
     /**
      * Option A: The "Reuse Location" Interactive Button
@@ -165,7 +175,7 @@ public class WhatsAppOutboundClient {
         // Persistence failure is caught here so it never propagates into @Retryable or the caller's business transaction.
         if (response != null && (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().value() == 200)) {
             try {
-                loggingService.logOutbound(toPhoneNumber, loggedDescription, java.time.LocalDateTime.now());
+                loggingService.logOutbound(toPhoneNumber, loggedDescription, LocalDateTime.now(clock));
             } catch (Exception e) {
                 log.error("Failed to persist outbound WhatsApp message log for phone {}: {}", toPhoneNumber, e.getMessage());
             }
