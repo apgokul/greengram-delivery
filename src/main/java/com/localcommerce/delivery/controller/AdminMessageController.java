@@ -4,6 +4,8 @@ import com.localcommerce.delivery.dto.ChatSummaryDTO;
 import com.localcommerce.delivery.dto.WhatsAppMessageLogDTO;
 import com.localcommerce.delivery.model.WhatsAppMessageLog;
 import com.localcommerce.delivery.repository.WhatsAppMessageLogRepository;
+import com.localcommerce.delivery.enums.OrderStatus;
+import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +20,12 @@ import java.util.List;
 public class AdminMessageController {
 
     private final WhatsAppMessageLogRepository messageLogRepository;
+    private final CustomerOrderRepository orderRepo;
+
+    private static final List<OrderStatus> ACTIVE_STATUSES = List.of(
+            OrderStatus.CREATED, OrderStatus.PENDING_WAREHOUSE,
+            OrderStatus.PACKING, OrderStatus.READY, OrderStatus.DISPATCHED
+    );
 
     /**
      * GET /api/admin/messages/chats
@@ -31,12 +39,19 @@ public class AdminMessageController {
         List<WhatsAppMessageLog> latestLogs = messageLogRepository.findLatestMessagePerChat();
 
         List<ChatSummaryDTO> summaries = latestLogs.stream()
-                .map(log -> ChatSummaryDTO.builder()
-                        .phoneNumber(log.getPhoneNumber())
-                        .lastMessage(log.getMessageBody())
-                        .lastMessageTimestamp(log.getTimestamp())
-                        .lastMessageDirection(log.getDirection())
-                        .build())
+                .map(msgLog -> {
+                    boolean awaitingLoc = !orderRepo.findByCustomerWhatsappNumberAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(
+                            msgLog.getPhoneNumber(), ACTIVE_STATUSES
+                    ).isEmpty();
+
+                    return ChatSummaryDTO.builder()
+                            .phoneNumber(msgLog.getPhoneNumber())
+                            .lastMessage(msgLog.getMessageBody())
+                            .lastMessageTimestamp(msgLog.getTimestamp())
+                            .lastMessageDirection(msgLog.getDirection())
+                            .awaitingLocation(awaitingLoc)
+                            .build();
+                })
                 .toList();
 
         return ResponseEntity.ok(summaries);

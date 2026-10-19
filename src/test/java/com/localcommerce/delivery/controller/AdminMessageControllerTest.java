@@ -30,6 +30,9 @@ class AdminMessageControllerTest {
     @Mock
     private WhatsAppMessageLogRepository messageLogRepository;
 
+    @Mock
+    private com.localcommerce.delivery.repository.CustomerOrderRepository orderRepo;
+
     @InjectMocks
     private AdminMessageController controller;
 
@@ -60,6 +63,8 @@ class AdminMessageControllerTest {
                 .build();
 
         when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of(log1, log2));
+        when(orderRepo.findByCustomerWhatsappNumberAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+                .thenReturn(List.of());
 
         mockMvc.perform(get("/api/admin/messages/chats")
                         .contentType(MediaType.APPLICATION_JSON))

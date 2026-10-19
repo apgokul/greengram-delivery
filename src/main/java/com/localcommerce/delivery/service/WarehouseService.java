@@ -34,6 +34,7 @@ public class WarehouseService {
     private final InventoryRepository inventoryRepo;
     private final WarehouseAlertService warehouseAlertService;
     private final TransactionTemplate transactionTemplate;
+    private final OrderService orderService;
 
     // The single phone number sitting on your packing table
     @Value("${warehouse.phone.number}")
@@ -63,7 +64,7 @@ public class WarehouseService {
             Long orderId = extractId(listId, WhatsAppConstants.VIEW_ORDER);
             CustomerOrder order = orderRepo.findById(orderId)
                     .orElseThrow(() -> new RuntimeException("Order not found"));
-            
+
             if (order.getStatus() == OrderStatus.PENDING_WAREHOUSE) {
                 warehouseAlertService.sendNewOrderAlert(order);
             } else {
@@ -72,7 +73,6 @@ public class WarehouseService {
         }
     }
 
-    @Transactional
     public void processButtonTap(String senderNumber, String buttonId) {
 
         // SECURITY CHECK: Ensure this button tap actually came from your warehouse phone
@@ -95,71 +95,32 @@ public class WarehouseService {
     }
 
     private void handleAcceptOrder(Long orderId) {
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+        CustomerOrder order = transactionTemplate.execute(status -> {
+            CustomerOrder o = orderRepo.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
+            o.advanceStateTo(OrderStatus.PACKING);
+            return orderRepo.save(o);
+        });
 
-        // 1. Move state forward
-        order.advanceStateTo(OrderStatus.PACKING); // Jumping straight to packing since they accepted it
-        orderRepo.save(order);
-
-        // 2. Send the NEXT button to the warehouse
+        // Send the NEXT button to the warehouse
         outboundClient.sendBagReadyPrompt(warehousePhoneNumber, order);
     }
 
     private void handleBagReady(Long orderId) {
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
-
-        // 1. Move state to READY
-        order.advanceStateTo(OrderStatus.READY);
-        order.setReadyAt(LocalDateTime.now());
-        orderRepo.save(order);
-
-        log.info("Triggering Routing Engine for Order: {}", orderId);
-    }
-    private void handleStockIssue(Long orderId) {
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
-
-        // 1. Restore the inventory safely via TransactionTemplate
         transactionTemplate.execute(status -> {
-            // Group the restoration quantities by Inventory
-            Map<Inventory, BigDecimal> inventoryRestorationMap = new HashMap<>();
-            for (OrderItem item : order.getItems()) {
-                Product product = item.getProduct();
-                Inventory inv = product.getInventory();
-                if (inv == null) continue;
-
-                BigDecimal variantTotalQuantity = product.getPackageQuantity().multiply(BigDecimal.valueOf(item.getQuantity()));
-                BigDecimal restoredQuantityInBaseUnit = UnitConverter.convert(variantTotalQuantity, product.getPackageUnit(), inv.getUnit());
-
-                inventoryRestorationMap.merge(inv, restoredQuantityInBaseUnit, BigDecimal::add);
-            }
-
-            // Sort inventories by ID to prevent deadlocks
-            List<Inventory> inventoriesToRestore = inventoryRestorationMap.keySet().stream()
-                    .sorted(Comparator.comparing(Inventory::getId))
-                    .toList();
-
-            for (Inventory inv : inventoriesToRestore) {
-                Inventory lockedInv = inventoryRepo.findByIdForUpdate(inv.getId())
-                        .orElseThrow(() -> new RuntimeException("Inventory not found"));
-
-                BigDecimal quantityToRestore = inventoryRestorationMap.get(inv);
-                lockedInv.setStockQuantity(lockedInv.getStockQuantity().add(quantityToRestore));
-                inventoryRepo.save(lockedInv);
-            }
-            
+            CustomerOrder o = orderRepo.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
+            o.advanceStateTo(OrderStatus.READY);
+            o.setReadyAt(LocalDateTime.now());
+            orderRepo.save(o);
             return null;
         });
 
-        // 2. Cancel the order
-        order.advanceStateTo(OrderStatus.CANCELLED);
-        orderRepo.save(order);
+        log.info("Triggering Routing Engine for Order: {}", orderId);
+    }
 
-        // 3. Alert the customer
-        String customerPhone = order.getCustomer().getWhatsappNumber();
-        outboundClient.sendTextUpdate(customerPhone, WhatsAppConstants.STOCK_ISSUE_CANCELLATION);
+    private void handleStockIssue(Long orderId) {
+        orderService.cancelOrder(orderId, "Warehouse Stock Issue", com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE);
     }
 
     // Helper method to safely pull the database ID out of the Meta payload string

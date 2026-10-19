@@ -35,4 +35,12 @@ public class OrderItem {
 
     // The price of the product AT THE TIME of the order
     private BigDecimal lockedPrice;
+
+    // Snapshot of the exact quantity deducted from inventory at checkout confirmation
+    @jakarta.persistence.Column(name = "deducted_quantity", precision = 38, scale = 3)
+    private BigDecimal deductedQuantity;
+
+    // Flags legacy items where packaging/quantity was uncertain at cancellation
+    @jakarta.persistence.Column(name = "stock_reconciliation_required", nullable = false)
+    private boolean stockReconciliationRequired = false;
 }

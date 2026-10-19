@@ -187,4 +187,87 @@ class OrderServiceConcurrencyIntegrationTest {
             assertTrue(finalInventory.getStockQuantity().compareTo(new BigDecimal("0.750")) == 0, "Stock must be exactly 0.750 if B succeeded");
         }
     }
+
+    @Test
+    void testConcurrentCancellationAndDelivery_NoDeadlock() throws InterruptedException {
+        // Setup order in DISPATCHED status with deducted inventory snapshot
+        Customer customer = customerRepository.findAll().get(0);
+        Product product1 = productRepository.findBySku("CHILLIPWD_1KG").orElseThrow();
+        Inventory inv = inventoryRepository.findById(inventoryId).orElseThrow();
+        inv.setStockQuantity(new BigDecimal("5.000"));
+        inventoryRepository.save(inv);
+
+        CustomerOrder order = new CustomerOrder();
+        order.setCustomer(customer);
+        order.setStatus(OrderStatus.DISPATCHED);
+
+        OrderItem item = new OrderItem();
+        item.setProduct(product1);
+        item.setQuantity(1);
+        item.setDeductedQuantity(new BigDecimal("1.000")); // 1 KG deducted
+        item.setCustomerOrder(order);
+        order.setItems(new ArrayList<>(List.of(item)));
+        order = orderRepository.save(order);
+        Long orderId = order.getId();
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        Callable<Void> cancelTask = () -> {
+            try {
+                orderService.cancelOrder(orderId, "Customer Unreachable", com.localcommerce.delivery.enums.CancellationActor.RIDER);
+            } catch (Exception ignored) {
+            }
+            return null;
+        };
+
+        Callable<Void> deliverTask = () -> {
+            try {
+                orderService.completeDelivery(orderId);
+            } catch (Exception ignored) {
+            }
+            return null;
+        };
+
+        // Run both concurrently
+        executor.invokeAll(List.of(cancelTask, deliverTask));
+        executor.shutdown();
+
+        CustomerOrder finalOrder = orderRepository.findById(orderId).orElseThrow();
+        assertTrue(
+                finalOrder.getStatus() == OrderStatus.CANCELLED || finalOrder.getStatus() == OrderStatus.DELIVERED,
+                "Order must reach exactly one terminal state without deadlock"
+        );
+
+        Inventory finalInv = inventoryRepository.findById(inventoryId).orElseThrow();
+        if (finalOrder.getStatus() == OrderStatus.CANCELLED) {
+            // Stock restored exactly once: 5.000 + 1.000 = 6.000
+            assertEquals(0, new BigDecimal("6.000").compareTo(finalInv.getStockQuantity()));
+        } else {
+            // Delivered: stock untouched = 5.000
+            assertEquals(0, new BigDecimal("5.000").compareTo(finalInv.getStockQuantity()));
+        }
+    }
+
+    @Test
+    void testLocationAssignment_NeverOverwritesExistingLocation() {
+        Customer customer = customerRepository.findAll().get(0);
+        customer.setWhatsappNumber("919876543210");
+        customerRepository.save(customer);
+
+        CustomerOrder order = new CustomerOrder();
+        order.setCustomer(customer);
+        order.setStatus(OrderStatus.PENDING_WAREHOUSE);
+        order.setDeliveryLatitude(10.015000);
+        order.setDeliveryLongitude(76.224000);
+        order = orderRepository.save(order);
+        Long orderId = order.getId();
+
+        // Attempt to assign a new location to an order that already has coordinates
+        orderService.assignLocationToOrder(orderId, "919876543210", 10.020000, 76.230000);
+
+        CustomerOrder updatedOrder = orderRepository.findById(orderId).orElseThrow();
+        // Existing coordinates must be preserved
+        assertEquals(10.015000, updatedOrder.getDeliveryLatitude(), 0.00001);
+        assertEquals(76.224000, updatedOrder.getDeliveryLongitude(), 0.00001);
+    }
 }
