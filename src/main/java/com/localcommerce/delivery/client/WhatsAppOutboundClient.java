@@ -572,7 +572,7 @@ public class WhatsAppOutboundClient {
     }
 
     public void sendEditOrderPrompt(String toPhoneNumber) {
-        sendTextUpdate(toPhoneNumber, WhatsAppConstants.EDIT_ORDER_PROMPT);
+        sendCatalogMessage(toPhoneNumber, WhatsAppConstants.EDIT_ORDER_PROMPT);
     }
 
     public void sendLocationDisambiguationPrompt(String toPhoneNumber, List<CustomerOrder> candidateOrders, Double lat, Double lng) {
@@ -666,6 +666,13 @@ public class WhatsAppOutboundClient {
     }
 
     public void sendCatalogMessage(String recipientId) {
+        sendCatalogMessage(recipientId,
+                "Welcome to *GreenGram!* 🛒\n\n" +
+                        "Your everyday groceries, made easy.\n\n" +
+                        "Explore our products and place your order below. 👇");
+    }
+
+    public void sendCatalogMessage(String recipientId, String bodyText) {
         Map<String, Object> payload = new java.util.HashMap<>();
         payload.put(WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP);
         payload.put("recipient_type", "individual");
@@ -674,10 +681,7 @@ public class WhatsAppOutboundClient {
         Map<String, Object> interactive = new java.util.HashMap<>();
         interactive.put(WhatsAppConstants.TYPE, "catalog_message");
         interactive.put(WhatsAppConstants.BODY, Map.of(
-                WhatsAppConstants.TEXT,
-                "Welcome to *GreenGram!* 🛒\n\n" +
-                        "Your everyday groceries, made easy.\n\n" +
-                        "Explore our products and place your order below. 👇"
+                WhatsAppConstants.TEXT, bodyText
         ));
         interactive.put(WhatsAppConstants.ACTION, Map.of("name", "catalog_message"));
         
@@ -691,7 +695,7 @@ public class WhatsAppOutboundClient {
         }
 
         log.info("Sending interactive catalog message to {}", recipientId);
-        String catalogDescription = "Welcome to *GreenGram!* 🛒\n\nYour everyday groceries, made easy.\n\nExplore our products and place your order below. 👇\n[Interactive Catalog: View Products Action]";
+        String catalogDescription = bodyText + "\n[Interactive Catalog: View Products Action]";
         sendPostRequest(recipientId, catalogDescription, payload);
     }
 }

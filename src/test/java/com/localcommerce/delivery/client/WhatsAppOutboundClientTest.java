@@ -345,8 +345,11 @@ class WhatsAppOutboundClientTest {
         String text = (String) bodyTextMap.get("text");
 
         assertTrue(text.contains("Your order is confirmed!"));
+        assertTrue(text.contains("Thank you for choosing GreenGram 💚"));
+        assertTrue(text.contains("Your order will be delivered by this evening."));
+        assertTrue(text.contains("Where should we deliver?"));
         assertTrue(text.contains("https://www.google.com/maps?q=10.012345,76.212345"));
-        assertTrue(text.contains("choose your saved location or share a new location"));
+        assertTrue(text.contains("Choose your saved location below or share your current location"));
 
         Map<String, Object> action = (Map<String, Object>) interactive.get("action");
         Object[] buttons = (Object[]) action.get("buttons");
@@ -376,7 +379,9 @@ class WhatsAppOutboundClientTest {
         String text = (String) textMap.get("body");
 
         assertTrue(text.contains("Your order is confirmed!"));
-        assertTrue(text.contains("share your delivery location"));
+        assertTrue(text.contains("Thank you for choosing GreenGram 💚"));
+        assertTrue(text.contains("Your order will be delivered by this evening."));
+        assertTrue(text.contains("share your current location so we can deliver your order to the right place"));
     }
 
     @Test
@@ -398,11 +403,12 @@ class WhatsAppOutboundClientTest {
         String text = (String) textMap.get("body");
 
         assertTrue(text.contains("Your order is confirmed!"));
-        assertTrue(text.contains("preparing your order and will keep you updated."));
+        assertTrue(text.contains("Thank you for choosing GreenGram 💚"));
+        assertTrue(text.contains("Your order will be delivered by this evening."));
     }
 
     @Test
-    void testSendEditOrderPrompt_SendsEditGuidance() {
+    void testSendEditOrderPrompt_SendsInteractiveCatalogMessage() {
         ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
         ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
 
@@ -415,11 +421,16 @@ class WhatsAppOutboundClientTest {
         verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
 
         Map<String, Object> body = entityCaptor.getValue().getBody();
-        assertEquals("text", body.get("type"));
-        Map<String, Object> textMap = (Map<String, Object>) body.get("text");
-        String text = (String) textMap.get("body");
+        assertEquals("interactive", body.get("type"));
+        Map<String, Object> interactive = (Map<String, Object>) body.get("interactive");
+        assertEquals("catalog_message", interactive.get("type"));
 
-        assertTrue(text.contains("Let's update your order"));
-        assertTrue(text.contains("open our catalogue, update your cart and submit your order again."));
+        Map<String, Object> bodyMap = (Map<String, Object>) interactive.get("body");
+        String text = (String) bodyMap.get("text");
+        assertTrue(text.contains("Let's update your order 🛒"));
+        assertTrue(text.contains("No problem! Browse our catalogue, update your cart, and send us your new order."));
+
+        Map<String, Object> action = (Map<String, Object>) interactive.get("action");
+        assertEquals("catalog_message", action.get("name"));
     }
 }
