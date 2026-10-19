@@ -5,17 +5,20 @@ import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.model.ProductUnit;
 import com.localcommerce.delivery.service.SmsFallbackService;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
+import java.util.Map;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -259,5 +262,164 @@ class WhatsAppOutboundClientTest {
         } finally {
             TimeZone.setDefault(originalDefault);
         }
+    }
+
+    @Test
+    void testSendSavedLocationPrompt_WithCoordinates_SendsMapsUrlAndNewButtons() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendSavedLocationPrompt("919876543210", 100L, 10.012345, 76.212345);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("interactive", body.get("type"));
+
+        Map<String, Object> interactive = (Map<String, Object>) body.get("interactive");
+        Map<String, Object> bodyTextMap = (Map<String, Object>) interactive.get("body");
+        String text = (String) bodyTextMap.get("text");
+
+        assertTrue(text.contains("https://www.google.com/maps?q=10.012345,76.212345"));
+        assertTrue(text.contains("Your delivery location"));
+
+        Map<String, Object> action = (Map<String, Object>) interactive.get("action");
+        Object[] buttons = (Object[]) action.get("buttons");
+        assertEquals(2, buttons.length);
+
+        Map<String, Object> b1 = (Map<String, Object>) buttons[0];
+        Map<String, Object> reply1 = (Map<String, Object>) b1.get("reply");
+        assertEquals(WhatsAppConstants.REUSE_LOCATION + "100", reply1.get("id"));
+        assertEquals("Use Saved Location", reply1.get("title"));
+        assertTrue(((String) reply1.get("title")).length() <= 20);
+
+        Map<String, Object> b2 = (Map<String, Object>) buttons[1];
+        Map<String, Object> reply2 = (Map<String, Object>) b2.get("reply");
+        assertEquals(WhatsAppConstants.NEW_LOCATION + "100", reply2.get("id"));
+        assertEquals("Share New Location", reply2.get("title"));
+        assertTrue(((String) reply2.get("title")).length() <= 20);
+    }
+
+    @Test
+    void testSendSavedLocationPrompt_NullCoordinates_FallsBackToStandardPrompt() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendSavedLocationPrompt("919876543210", 100L, null, null);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("text", body.get("type"));
+        Map<String, Object> textMap = (Map<String, Object>) body.get("text");
+        String text = (String) textMap.get("body");
+        assertEquals(WhatsAppConstants.LOCATION_REQUEST_PROMPT, text);
+    }
+
+    @Test
+    void testSendCombinedOrderConfirmationPrompt_WithSavedLocation_InteractiveButtons() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendCombinedOrderConfirmationPrompt("919876543210", 100L, true, 10.012345, 76.212345);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("interactive", body.get("type"));
+
+        Map<String, Object> interactive = (Map<String, Object>) body.get("interactive");
+        Map<String, Object> bodyTextMap = (Map<String, Object>) interactive.get("body");
+        String text = (String) bodyTextMap.get("text");
+
+        assertTrue(text.contains("Your order is confirmed!"));
+        assertTrue(text.contains("https://www.google.com/maps?q=10.012345,76.212345"));
+        assertTrue(text.contains("choose your saved location or share a new location"));
+
+        Map<String, Object> action = (Map<String, Object>) interactive.get("action");
+        Object[] buttons = (Object[]) action.get("buttons");
+        assertEquals(2, buttons.length);
+        Map<String, Object> reply1 = (Map<String, Object>) ((Map<String, Object>) buttons[0]).get("reply");
+        assertEquals("Use Saved Location", reply1.get("title"));
+        Map<String, Object> reply2 = (Map<String, Object>) ((Map<String, Object>) buttons[1]).get("reply");
+        assertEquals("Share New Location", reply2.get("title"));
+    }
+
+    @Test
+    void testSendCombinedOrderConfirmationPrompt_NoSavedLocation_TextPrompt() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendCombinedOrderConfirmationPrompt("919876543210", 100L, false, null, null);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("text", body.get("type"));
+        Map<String, Object> textMap = (Map<String, Object>) body.get("text");
+        String text = (String) textMap.get("body");
+
+        assertTrue(text.contains("Your order is confirmed!"));
+        assertTrue(text.contains("share your delivery location"));
+    }
+
+    @Test
+    void testSendOrderConfirmedConcise_SendsConciseConfirmation() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendOrderConfirmedConcise("919876543210");
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("text", body.get("type"));
+        Map<String, Object> textMap = (Map<String, Object>) body.get("text");
+        String text = (String) textMap.get("body");
+
+        assertTrue(text.contains("Your order is confirmed!"));
+        assertTrue(text.contains("preparing your order and will keep you updated."));
+    }
+
+    @Test
+    void testSendEditOrderPrompt_SendsEditGuidance() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        outboundClient.sendEditOrderPrompt("919876543210");
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("text", body.get("type"));
+        Map<String, Object> textMap = (Map<String, Object>) body.get("text");
+        String text = (String) textMap.get("body");
+
+        assertTrue(text.contains("Let's update your order"));
+        assertTrue(text.contains("open our catalogue, update your cart and submit your order again."));
     }
 }

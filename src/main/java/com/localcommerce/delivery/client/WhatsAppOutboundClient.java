@@ -487,8 +487,15 @@ public class WhatsAppOutboundClient {
         sendPostRequest(toPhoneNumber, WhatsAppConstants.LOCATION_REQUEST_PROMPT, body);
     }
 
-    public void sendSavedLocationPrompt(String toPhoneNumber, Long orderId) {
-        String promptText = "📍 Where should we deliver this order?\n\nWould you like to use your saved address or send a new location pin?";
+    public void sendSavedLocationPrompt(String toPhoneNumber, Long orderId, Double lat, Double lng) {
+        if (lat == null || lng == null) {
+            sendDeliveryLocationPrompt(toPhoneNumber);
+            return;
+        }
+
+        String mapsUrl = String.format(Locale.ROOT, "https://www.google.com/maps?q=%.6f,%.6f", lat, lng);
+        String promptText = String.format(WhatsAppConstants.SAVED_LOCATION_STANDALONE_PROMPT, mapsUrl);
+
         Map<String, Object> body = Map.of(
                 WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
                 WhatsAppConstants.TO, toPhoneNumber,
@@ -502,21 +509,70 @@ public class WhatsAppOutboundClient {
                                                 WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
                                                 WhatsAppConstants.REPLY, Map.of(
                                                         WhatsAppConstants.ID, WhatsAppConstants.REUSE_LOCATION + orderId,
-                                                        WhatsAppConstants.TITLE, "📍 Use Saved Address"
+                                                        WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_YES_BUTTON
                                                 )
                                         ),
                                         Map.of(
                                                 WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
                                                 WhatsAppConstants.REPLY, Map.of(
                                                         WhatsAppConstants.ID, WhatsAppConstants.NEW_LOCATION + orderId,
-                                                        WhatsAppConstants.TITLE, "📌 Send New Pin"
+                                                        WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON
                                                 )
                                         )
                                 }
                         )
                 )
         );
-        sendPostRequest(toPhoneNumber, promptText + "\n[Buttons: 1. Use Saved Address | 2. Send New Pin]", body);
+        sendPostRequest(toPhoneNumber, promptText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]", body);
+    }
+
+    public void sendSavedLocationPrompt(String toPhoneNumber, Long orderId) {
+        sendSavedLocationPrompt(toPhoneNumber, orderId, null, null);
+    }
+
+    public void sendCombinedOrderConfirmationPrompt(String toPhoneNumber, Long orderId, boolean hasSavedLocation, Double lat, Double lng) {
+        if (hasSavedLocation && lat != null && lng != null) {
+            String mapsUrl = String.format(Locale.ROOT, "https://www.google.com/maps?q=%.6f,%.6f", lat, lng);
+            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT, mapsUrl);
+            Map<String, Object> body = Map.of(
+                    WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                    WhatsAppConstants.TO, toPhoneNumber,
+                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                    WhatsAppConstants.INTERACTIVE, Map.of(
+                            WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
+                            WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                            WhatsAppConstants.ACTION, Map.of(
+                                    WhatsAppConstants.BUTTONS, new Object[]{
+                                            Map.of(
+                                                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                    WhatsAppConstants.REPLY, Map.of(
+                                                            WhatsAppConstants.ID, WhatsAppConstants.REUSE_LOCATION + orderId,
+                                                            WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_YES_BUTTON
+                                                    )
+                                            ),
+                                            Map.of(
+                                                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                    WhatsAppConstants.REPLY, Map.of(
+                                                            WhatsAppConstants.ID, WhatsAppConstants.NEW_LOCATION + orderId,
+                                                            WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON
+                                                    )
+                                            )
+                                    }
+                            )
+                    )
+            );
+            sendPostRequest(toPhoneNumber, bodyText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]", body);
+        } else {
+            sendTextUpdate(toPhoneNumber, WhatsAppConstants.ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT);
+        }
+    }
+
+    public void sendOrderConfirmedConcise(String toPhoneNumber) {
+        sendTextUpdate(toPhoneNumber, WhatsAppConstants.ORDER_CONFIRMED_ALREADY_HAS_LOCATION);
+    }
+
+    public void sendEditOrderPrompt(String toPhoneNumber) {
+        sendTextUpdate(toPhoneNumber, WhatsAppConstants.EDIT_ORDER_PROMPT);
     }
 
     public void sendLocationDisambiguationPrompt(String toPhoneNumber, List<CustomerOrder> candidateOrders, Double lat, Double lng) {

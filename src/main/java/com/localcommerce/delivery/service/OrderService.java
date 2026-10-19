@@ -1,8 +1,10 @@
 package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.dto.CartItemDTO;
 import com.localcommerce.delivery.dto.OrderProcessing;
+import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.Customer;
 import com.localcommerce.delivery.model.CustomerOrder;
@@ -214,7 +216,7 @@ public class OrderService {
                 return null;
             });
             try {
-                outboundClient.sendTextUpdate(recipientId, "📍 Delivery location confirmed for Order #" + singleOrder.getDisplayId() + "!");
+                outboundClient.sendTextUpdate(recipientId, WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
             } catch (Exception e) {
                 log.warn("Failed to deliver location confirmation alert to {}: {}", recipientId, e.getMessage());
             }
@@ -271,7 +273,7 @@ public class OrderService {
                 customerRepo.save(customer);
             }
 
-            return "📍 Delivery location confirmed for Order #" + order.getDisplayId() + "!";
+            return WhatsAppConstants.LOCATION_CONFIRMED_NATURAL;
         });
 
         if (confirmationMsg != null && senderNumber != null) {
@@ -335,7 +337,7 @@ public class OrderService {
 
         if (senderNumber != null) {
             try {
-                outboundClient.sendTextUpdate(senderNumber, "📍 Delivery location confirmed for your orders!");
+                outboundClient.sendTextUpdate(senderNumber, WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
             } catch (Exception e) {
                 log.warn("Failed to deliver location confirmation to {}: {}", senderNumber, e.getMessage());
             }
@@ -354,8 +356,7 @@ public class OrderService {
             order.setDeliveryLongitude(customer.getLongitude());
             orderRepo.save(order);
             try {
-                outboundClient.sendTextUpdate(customer.getRecipientId(),
-                        "📍 Delivery location confirmed using your saved address for Order #" + order.getDisplayId() + "!");
+                outboundClient.sendTextUpdate(customer.getRecipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
             } catch (Exception e) {
                 log.warn("Failed to deliver saved location confirmation to {}: {}", customer.getRecipientId(), e.getMessage());
             }
@@ -373,15 +374,21 @@ public class OrderService {
         public final List<com.localcommerce.delivery.model.Inventory> lowStockInventories;
         public final boolean locationPromptNeeded;
         public final boolean hasSavedLocation;
+        public final Double savedLat;
+        public final Double savedLng;
 
         public CheckoutResult(CustomerOrder order,
                               List<com.localcommerce.delivery.model.Inventory> lowStockInventories,
                               boolean locationPromptNeeded,
-                              boolean hasSavedLocation) {
+                              boolean hasSavedLocation,
+                              Double savedLat,
+                              Double savedLng) {
             this.order = order;
             this.lowStockInventories = lowStockInventories;
             this.locationPromptNeeded = locationPromptNeeded;
             this.hasSavedLocation = hasSavedLocation;
+            this.savedLat = savedLat;
+            this.savedLng = savedLng;
         }
     }
 
@@ -463,13 +470,17 @@ public class OrderService {
 
             Customer customer = order.getCustomer();
             boolean locationPromptNeeded = (order.getDeliveryLatitude() == null);
-            boolean hasSavedLocation = (customer.getLatitude() != null && customer.getLongitude() != null);
+            Double savedLat = (customer != null) ? customer.getLatitude() : null;
+            Double savedLng = (customer != null) ? customer.getLongitude() : null;
+            boolean hasSavedLocation = (savedLat != null && savedLng != null);
 
             // Force initialization of lazy fields inside transaction
-            customer.getWhatsappNumber();
-            customer.getRecipientId();
+            if (customer != null) {
+                customer.getWhatsappNumber();
+                customer.getRecipientId();
+            }
 
-            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation);
+            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng);
         });
 
         if (result == null) {
@@ -483,13 +494,20 @@ public class OrderService {
             }
             warehouseAlertService.sendNewOrderAlert(result.order);
 
-            // Prompt for delivery location if not yet provided
-            if (result.locationPromptNeeded) {
-                String recipientId = result.order.getCustomer().getRecipientId();
-                if (result.hasSavedLocation) {
-                    outboundClient.sendSavedLocationPrompt(recipientId, result.order.getId());
+            Customer customer = result.order.getCustomer();
+            String recipientId = (customer != null) ? customer.getRecipientId() : null;
+
+            if (recipientId != null) {
+                if (result.locationPromptNeeded) {
+                    outboundClient.sendCombinedOrderConfirmationPrompt(
+                            recipientId,
+                            result.order.getId(),
+                            result.hasSavedLocation,
+                            result.savedLat,
+                            result.savedLng
+                    );
                 } else {
-                    outboundClient.sendDeliveryLocationPrompt(recipientId);
+                    outboundClient.sendOrderConfirmedConcise(recipientId);
                 }
             }
         } catch (Exception e) {
@@ -497,42 +515,83 @@ public class OrderService {
         }
     }
 
-    public static class CancelResult {
-        public final CustomerOrder order;
-        public final com.localcommerce.delivery.enums.CancellationActor actor;
-        public final String reason;
-        public final String recipientId;
-        public final String customerPhone;
+    @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
+    public CancellationResult editOrder(Long orderId) {
+        CancellationResult result = transactionTemplate.execute(status -> {
+            java.util.Optional<CustomerOrder> orderOpt = orderRepo.findByIdForUpdate(orderId);
+            if (orderOpt.isEmpty()) {
+                log.warn("Attempted to edit non-existent order: {}", orderId);
+                return CancellationResult.notFound(orderId, CancellationActor.CUSTOMER);
+            }
+            CustomerOrder order = orderOpt.get();
 
-        public CancelResult(CustomerOrder order,
-                            com.localcommerce.delivery.enums.CancellationActor actor,
-                            String reason,
-                            String recipientId,
-                            String customerPhone) {
-            this.order = order;
-            this.actor = actor;
-            this.reason = reason;
-            this.recipientId = recipientId;
-            this.customerPhone = customerPhone;
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                return CancellationResult.alreadyDelivered(order, CancellationActor.CUSTOMER);
+            }
+
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                return CancellationResult.alreadyCancelled(order, CancellationActor.CUSTOMER);
+            }
+
+            if (order.getStatus() != OrderStatus.CREATED) {
+                log.warn("Customer attempted to edit order {} in state {}", orderId, order.getStatus());
+                return CancellationResult.notAllowed(
+                        "This order is already being prepared or out for delivery and can no longer be edited.",
+                        order,
+                        CancellationActor.CUSTOMER
+                );
+            }
+
+            // Cancel the original CREATED order internally without modifying inventory
+            order.advanceStateTo(OrderStatus.CANCELLED);
+            order.setCancellationReason("Customer Edited Order");
+            orderRepo.save(order);
+
+            Customer customer = order.getCustomer();
+            if (customer != null) {
+                customer.getRecipientId();
+            }
+
+            return CancellationResult.success(order, CancellationActor.CUSTOMER, "Customer Edited Order");
+        });
+
+        if (result != null && result.isSuccess()) {
+            try {
+                CustomerOrder order = result.order();
+                Customer customer = (order != null) ? order.getCustomer() : null;
+                String recipientId = (customer != null) ? customer.getRecipientId() : null;
+                if (recipientId != null) {
+                    outboundClient.sendEditOrderPrompt(recipientId);
+                }
+            } catch (Exception e) {
+                log.error("Failed to send edit order prompt for order {}: {}", orderId, e.getMessage());
+            }
         }
+
+        return result;
     }
 
     @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
-    public void cancelOrder(Long orderId, String reason, com.localcommerce.delivery.enums.CancellationActor actor) {
-        CancelResult result = transactionTemplate.execute(status -> {
+    public CancellationResult cancelOrder(Long orderId, String reason, CancellationActor actor) {
+        CancellationResult result = transactionTemplate.execute(status -> {
             // Level 1 Lock: CustomerOrder
-            CustomerOrder order = orderRepo.findByIdForUpdate(orderId)
-                    .orElseThrow(() -> new EntityNotFoundException("Order not found: " + orderId));
+            java.util.Optional<CustomerOrder> orderOpt = orderRepo.findByIdForUpdate(orderId);
+            if (orderOpt.isEmpty()) {
+                log.warn("Attempted to cancel non-existent order: {}", orderId);
+                return CancellationResult.notFound(orderId, actor);
+            }
+            CustomerOrder order = orderOpt.get();
+
+            // Terminal guard: DELIVERED orders cannot be cancelled
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                log.warn("Attempted to cancel delivered order {} by actor {}", orderId, actor);
+                return CancellationResult.alreadyDelivered(order, actor);
+            }
 
             // Idempotency: If already cancelled, return early without error
             if (order.getStatus() == OrderStatus.CANCELLED) {
                 log.info("Order {} is already CANCELLED. No-op for actor {}", orderId, actor);
-                return null;
-            }
-
-            // Terminal guard: DELIVERED orders cannot be cancelled
-            if (order.getStatus() == OrderStatus.DELIVERED) {
-                throw new IllegalStateException("Delivered order " + orderId + " cannot be cancelled.");
+                return CancellationResult.alreadyCancelled(order, actor);
             }
 
             OrderStatus preStatus = order.getStatus();
@@ -541,17 +600,20 @@ public class OrderService {
             switch (actor) {
                 case CUSTOMER -> {
                     if (preStatus != OrderStatus.CREATED) {
-                        throw new IllegalStateException("Customer cannot cancel order in status " + preStatus);
+                        log.warn("Customer attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("This order is already being prepared or out for delivery and can no longer be cancelled.", order, actor);
                     }
                 }
                 case WAREHOUSE -> {
                     if (preStatus != OrderStatus.PENDING_WAREHOUSE && preStatus != OrderStatus.PACKING) {
-                        throw new IllegalStateException("Warehouse cannot cancel order in status " + preStatus);
+                        log.warn("Warehouse attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("The order can no longer be cancelled at this stage.", order, actor);
                     }
                 }
                 case RIDER -> {
                     if (preStatus != OrderStatus.DISPATCHED) {
-                        throw new IllegalStateException("Rider cannot cancel order in status " + preStatus);
+                        log.warn("Rider attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("The order can no longer be cancelled at this stage.", order, actor);
                     }
                 }
                 case ADMIN -> {
@@ -626,32 +688,49 @@ public class OrderService {
             }
 
             Customer customer = order.getCustomer();
-            String recipientId = customer.getRecipientId();
-            String phone = customer.getWhatsappNumber();
+            if (customer != null) {
+                customer.getRecipientId();
+                customer.getWhatsappNumber();
+            }
 
-            return new CancelResult(order, actor, finalReason, recipientId, phone);
+            return CancellationResult.success(order, actor, finalReason);
         });
 
-        if (result == null) {
-            return;
+        if (result == null || !result.isSuccess()) {
+            return result;
         }
 
-        // Post-commit: Best-effort notifications
+        // Post-commit: Best-effort notifications on SUCCESS
         try {
-            if (result.actor == com.localcommerce.delivery.enums.CancellationActor.CUSTOMER) {
-                outboundClient.sendTextUpdate(result.recipientId, "Your order #" + result.order.getDisplayId() + " has been cancelled.");
-            } else if (result.actor == com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE) {
-                outboundClient.sendTextUpdate(result.customerPhone, WhatsAppConstants.STOCK_ISSUE_CANCELLATION);
-            } else if (result.actor == com.localcommerce.delivery.enums.CancellationActor.RIDER) {
-                outboundClient.sendTextUpdate(result.customerPhone,
-                        "Your order #" + result.order.getDisplayId() + " could not be delivered and has been cancelled. Reason: " + result.reason);
-            } else if (result.actor == com.localcommerce.delivery.enums.CancellationActor.ADMIN) {
-                outboundClient.sendTextUpdate(result.customerPhone,
-                        "Your order #" + result.order.getDisplayId() + " was cancelled by support. Reason: " + result.reason);
+            CustomerOrder order = result.order();
+            Customer customer = (order != null) ? order.getCustomer() : null;
+            String recipientId = (customer != null) ? customer.getRecipientId() : null;
+            String phone = (customer != null) ? customer.getWhatsappNumber() : null;
+
+            if (result.actor() == CancellationActor.CUSTOMER) {
+                if (recipientId != null) {
+                    outboundClient.sendTextUpdate(recipientId, WhatsAppConstants.ORDER_CANCELLED_CUSTOMER);
+                }
+            } else if (result.actor() == CancellationActor.WAREHOUSE) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone, WhatsAppConstants.STOCK_ISSUE_CANCELLATION);
+                }
+            } else if (result.actor() == CancellationActor.RIDER) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone,
+                            "Your order #" + order.getDisplayId() + " could not be delivered and has been cancelled. Reason: " + result.reason());
+                }
+            } else if (result.actor() == CancellationActor.ADMIN) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone,
+                            "Your order #" + order.getDisplayId() + " was cancelled by support. Reason: " + result.reason());
+                }
             }
         } catch (Exception e) {
             log.error("Failed to deliver post-commit cancellation alert for order {}: {}", orderId, e.getMessage());
         }
+
+        return result;
     }
 
     @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)

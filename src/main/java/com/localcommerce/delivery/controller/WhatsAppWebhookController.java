@@ -1,6 +1,7 @@
 package com.localcommerce.delivery.controller;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.dto.CartItemDTO;
 import com.localcommerce.delivery.dto.OrderProcessing;
 import com.localcommerce.delivery.dto.WhatsAppWebhookPayload;
@@ -226,18 +227,22 @@ public class WhatsAppWebhookController {
                                 Long orderId = Long.parseLong(idStr);
                                 try {
                                     orderService.finalizeOrderCheckout(orderId);
-                                    outboundClient.sendTextUpdate(phoneNumber, WhatsAppConstants.ORDER_PACKING_ALERT);
                                 } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
                                     log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
                                     outboundClient.sendTextUpdate(phoneNumber, e.getMessage());
                                 }
                             } else if (buttonId.startsWith(WhatsAppConstants.EDIT_ORDER)) {
                                 Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.EDIT_ORDER, ""));
-                                orderService.cancelOrder(orderId, "Customer Edited Order", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
-                                outboundClient.sendCatalogMessage(phoneNumber);
+                                CancellationResult res = orderService.editOrder(orderId);
+                                if (!res.isSuccess()) {
+                                    outboundClient.sendTextUpdate(phoneNumber, res.message());
+                                }
                             } else if (buttonId.startsWith(WhatsAppConstants.CANCEL_ORDER)) {
                                 Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CANCEL_ORDER, ""));
-                                orderService.cancelOrder(orderId, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+                                CancellationResult res = orderService.cancelOrder(orderId, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+                                if (!res.isSuccess()) {
+                                    outboundClient.sendTextUpdate(phoneNumber, res.message());
+                                }
                             } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL_REASON)) {
                                 String remainder = buttonId.replace(WhatsAppConstants.RIDER_CANCEL_REASON, "");
                                 int lastUnder = remainder.lastIndexOf('_');
@@ -249,8 +254,12 @@ public class WhatsAppWebhookController {
                                     case "REJECTED" -> "Customer Refused";
                                     default -> reasonCode;
                                 };
-                                orderService.cancelOrder(orderId, reasonDisplay, com.localcommerce.delivery.enums.CancellationActor.RIDER);
-                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order #" + orderId + " delivery cancelled.");
+                                CancellationResult res = orderService.cancelOrder(orderId, reasonDisplay, com.localcommerce.delivery.enums.CancellationActor.RIDER);
+                                if (res.isSuccess()) {
+                                    outboundClient.sendTextUpdate(phoneNumber, "✅ Order #" + orderId + " delivery cancelled.");
+                                } else {
+                                    outboundClient.sendTextUpdate(phoneNumber, "⚠️ " + res.message());
+                                }
                             } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL)) {
                                 Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.RIDER_CANCEL, ""));
                                 outboundClient.sendRiderCancellationReasonsPrompt(phoneNumber, orderId);

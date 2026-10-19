@@ -1,6 +1,7 @@
 package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.OrderItem;
@@ -120,7 +121,12 @@ public class WarehouseService {
     }
 
     private void handleStockIssue(Long orderId) {
-        orderService.cancelOrder(orderId, "Warehouse Stock Issue", com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE);
+        CancellationResult res = orderService.cancelOrder(orderId, "Warehouse Stock Issue", com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE);
+        if (res.isSuccess()) {
+            outboundClient.sendTextUpdate(warehousePhoneNumber, "✅ Order #" + orderId + " cancelled due to stock issue.");
+        } else {
+            outboundClient.sendTextUpdate(warehousePhoneNumber, "⚠️ " + res.message());
+        }
     }
 
     // Helper method to safely pull the database ID out of the Meta payload string

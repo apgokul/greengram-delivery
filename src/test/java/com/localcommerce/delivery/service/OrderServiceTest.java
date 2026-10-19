@@ -1,9 +1,11 @@
 package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.enums.OrderStatus;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.model.ProductUnit;
 import com.localcommerce.delivery.model.Inventory;
@@ -100,7 +102,7 @@ class OrderServiceTest {
     }
 
     @Test
-    void testFinalizeOrderCheckout_SufficientStock() {
+    void testFinalizeOrderCheckout_SufficientStock_NoSavedLocation_SendsCombinedPrompt() {
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
         when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
         when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inventory));
@@ -120,8 +122,54 @@ class OrderServiceTest {
         
         // Verify warehouse alert sent
         verify(warehouseAlertService, times(1)).sendNewOrderAlert(order);
-        // Verify location prompt sent
-        verify(outboundClient, times(1)).sendDeliveryLocationPrompt(customer.getRecipientId());
+        // Verify combined location prompt sent without saved coordinates
+        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(customer.getRecipientId(), 100L, false, null, null);
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_WithSavedLocation_SendsCombinedPromptWithCoordinates() {
+        customer.setLatitude(10.010);
+        customer.setLongitude(76.210);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+        when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inventory));
+
+        orderService.finalizeOrderCheckout(100L);
+
+        assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
+        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(customer.getRecipientId(), 100L, true, 10.010, 76.210);
+        verify(outboundClient, never()).sendOrderConfirmedConcise(any());
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_OrderAlreadyHasCoordinates_SendsConciseConfirmationOnly() {
+        order.setDeliveryLatitude(10.015);
+        order.setDeliveryLongitude(76.215);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+        when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inventory));
+
+        orderService.finalizeOrderCheckout(100L);
+
+        assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
+        verify(outboundClient, times(1)).sendOrderConfirmedConcise(customer.getRecipientId());
+        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any());
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_RepeatedConfirmation_IdempotentNoOp() {
+        order.setStatus(OrderStatus.PENDING_WAREHOUSE);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.finalizeOrderCheckout(100L);
+
+        // Does NOT deduct stock again
+        verify(inventoryRepo, never()).findByIdForUpdate(any());
+        verify(inventoryRepo, never()).save(any());
+        // Does NOT send duplicate alerts
+        verify(warehouseAlertService, never()).sendNewOrderAlert(any());
+        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any());
+        verify(outboundClient, never()).sendOrderConfirmedConcise(any());
     }
 
     @Test
@@ -232,26 +280,29 @@ class OrderServiceTest {
         order.setStatus(OrderStatus.CREATED);
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        orderService.cancelOrder(100L, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+        CancellationResult res = orderService.cancelOrder(100L, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
 
+        assertTrue(res.isSuccess());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertEquals("Customer Cancelled", order.getCancellationReason());
         // Customer cancel on CREATED must NEVER restore stock
         verify(inventoryRepo, never()).findByIdForUpdate(any());
         verify(inventoryRepo, never()).save(any());
-        verify(outboundClient, times(1)).sendTextUpdate(eq(customer.getRecipientId()), any());
+        verify(outboundClient, times(1)).sendTextUpdate(eq(customer.getRecipientId()), eq(WhatsAppConstants.ORDER_CANCELLED_CUSTOMER));
     }
 
     @Test
-    void testCancelOrder_CustomerCancelsPendingWarehouse_ThrowsException() {
+    void testCancelOrder_CustomerCancelsPendingWarehouse_ReturnsNotAllowed() {
         order.setStatus(OrderStatus.PENDING_WAREHOUSE);
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        assertThrows(IllegalStateException.class, () -> {
-            orderService.cancelOrder(100L, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
-        });
+        CancellationResult res = orderService.cancelOrder(100L, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
 
+        assertFalse(res.isSuccess());
+        assertEquals(CancellationResult.Status.NOT_ALLOWED_IN_CURRENT_STATE, res.status());
+        assertEquals("This order is already being prepared or out for delivery and can no longer be cancelled.", res.message());
         assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
+        verify(inventoryRepo, never()).save(any());
     }
 
     @Test
@@ -261,12 +312,13 @@ class OrderServiceTest {
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
         when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
 
-        orderService.cancelOrder(100L, "Stock Issue", com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE);
+        CancellationResult res = orderService.cancelOrder(100L, "Stock Issue", com.localcommerce.delivery.enums.CancellationActor.WAREHOUSE);
 
+        assertTrue(res.isSuccess());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertEquals(0, new BigDecimal("12.000").compareTo(inventory.getStockQuantity()));
         verify(inventoryRepo, times(1)).save(inventory);
-        verify(outboundClient, times(1)).sendTextUpdate(eq(customer.getWhatsappNumber()), eq(com.localcommerce.delivery.utils.WhatsAppConstants.STOCK_ISSUE_CANCELLATION));
+        verify(outboundClient, times(1)).sendTextUpdate(eq(customer.getWhatsappNumber()), eq(WhatsAppConstants.STOCK_ISSUE_CANCELLATION));
     }
 
     @Test
@@ -276,22 +328,24 @@ class OrderServiceTest {
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
         when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
 
-        orderService.cancelOrder(100L, "Customer Unreachable", com.localcommerce.delivery.enums.CancellationActor.RIDER);
+        CancellationResult res = orderService.cancelOrder(100L, "Customer Unreachable", com.localcommerce.delivery.enums.CancellationActor.RIDER);
 
+        assertTrue(res.isSuccess());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertEquals(0, new BigDecimal("12.000").compareTo(inventory.getStockQuantity()));
         verify(inventoryRepo, times(1)).save(inventory);
     }
 
     @Test
-    void testCancelOrder_DeliveredOrder_ThrowsException() {
+    void testCancelOrder_DeliveredOrder_ReturnsAlreadyDelivered() {
         order.setStatus(OrderStatus.DELIVERED);
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        assertThrows(IllegalStateException.class, () -> {
-            orderService.cancelOrder(100L, "Rider Return", com.localcommerce.delivery.enums.CancellationActor.RIDER);
-        });
+        CancellationResult res = orderService.cancelOrder(100L, "Rider Return", com.localcommerce.delivery.enums.CancellationActor.RIDER);
 
+        assertFalse(res.isSuccess());
+        assertEquals(CancellationResult.Status.ALREADY_DELIVERED, res.status());
+        assertEquals("This order has already been delivered and cannot be cancelled.", res.message());
         assertEquals(OrderStatus.DELIVERED, order.getStatus());
         verify(inventoryRepo, never()).save(any());
     }
@@ -301,8 +355,11 @@ class OrderServiceTest {
         order.setStatus(OrderStatus.CANCELLED);
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        orderService.cancelOrder(100L, "Duplicate tap", com.localcommerce.delivery.enums.CancellationActor.RIDER);
+        CancellationResult res = orderService.cancelOrder(100L, "Duplicate tap", com.localcommerce.delivery.enums.CancellationActor.RIDER);
 
+        assertFalse(res.isSuccess());
+        assertEquals(CancellationResult.Status.ALREADY_CANCELLED, res.status());
+        assertEquals("This order is already cancelled.", res.message());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         verify(inventoryRepo, never()).save(any());
     }
@@ -313,8 +370,9 @@ class OrderServiceTest {
         item.setDeductedQuantity(null); // Legacy item
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        orderService.cancelOrder(100L, "Cancel Legacy", com.localcommerce.delivery.enums.CancellationActor.ADMIN);
+        CancellationResult res = orderService.cancelOrder(100L, "Cancel Legacy", com.localcommerce.delivery.enums.CancellationActor.ADMIN);
 
+        assertTrue(res.isSuccess());
         assertEquals(OrderStatus.CANCELLED, order.getStatus());
         assertFalse(order.isStockReconciled());
         assertTrue(item.isStockReconciliationRequired());
@@ -322,6 +380,53 @@ class OrderServiceTest {
         // Does NOT restore uncertain stock!
         verify(inventoryRepo, never()).findByIdForUpdate(any());
         verify(inventoryRepo, never()).save(any());
+    }
+
+    @Test
+    void testEditOrder_CreatedOrder_Success() {
+        order.setStatus(OrderStatus.CREATED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        CancellationResult res = orderService.editOrder(100L);
+
+        assertTrue(res.isSuccess());
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        assertEquals("Customer Edited Order", order.getCancellationReason());
+        // Must never touch inventory
+        verify(inventoryRepo, never()).findByIdForUpdate(any());
+        verify(inventoryRepo, never()).save(any());
+        // Must send dedicated edit order prompt
+        verify(outboundClient, times(1)).sendEditOrderPrompt(customer.getRecipientId());
+        // Must not send generic cancellation text
+        verify(outboundClient, never()).sendTextUpdate(eq(customer.getRecipientId()), eq(WhatsAppConstants.ORDER_CANCELLED_CUSTOMER));
+    }
+
+    @Test
+    void testEditOrder_PendingWarehouseOrder_FailsValidation() {
+        order.setStatus(OrderStatus.PENDING_WAREHOUSE);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        CancellationResult res = orderService.editOrder(100L);
+
+        assertFalse(res.isSuccess());
+        assertEquals(CancellationResult.Status.NOT_ALLOWED_IN_CURRENT_STATE, res.status());
+        assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
+        verify(inventoryRepo, never()).save(any());
+        verify(outboundClient, never()).sendEditOrderPrompt(any());
+    }
+
+    @Test
+    void testConfirmSavedLocation_WithCoordinates_Success() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L);
+
+        assertEquals(10.012, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.212, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, times(1)).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(customer.getRecipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
     }
 
     @Test
@@ -333,7 +438,7 @@ class OrderServiceTest {
         assertEquals(10.010, order.getDeliveryLatitude(), 0.0001);
         assertEquals(76.210, order.getDeliveryLongitude(), 0.0001);
         verify(orderRepo, times(1)).save(order);
-        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), argThat(msg -> msg.contains("confirmed for Order #ORD-100")));
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
     }
 
     @Test

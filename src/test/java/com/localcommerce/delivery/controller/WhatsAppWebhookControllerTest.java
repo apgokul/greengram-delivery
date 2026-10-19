@@ -2,10 +2,13 @@ package com.localcommerce.delivery.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
+import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.service.BatchingService;
 import com.localcommerce.delivery.service.OrderService;
 import com.localcommerce.delivery.service.WarehouseService;
 import com.localcommerce.delivery.utils.WebhookSignatureVerifier;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -346,6 +349,146 @@ class WhatsAppWebhookControllerTest {
 
         verify(orderService).finalizeOrderCheckout(1042L);
         verify(outboundClient).sendTextUpdate("918888888888", "Sorry, product is currently out of stock.");
+    }
+
+    private String createButtonReplyPayload(String buttonId, String fromNumber) {
+        return """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "%s"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "%s",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "button_reply",
+                                  "button_reply": {
+                                    "id": "%s"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(fromNumber, fromNumber, buttonId);
+    }
+
+    @Test
+    void testConfirmCheckout_Success_DoesNotSendDuplicatePackingAlert() throws Exception {
+        String payload = createButtonReplyPayload("CONFIRM_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).finalizeOrderCheckout(1042L);
+        // Verify duplicate packing alert is NOT sent by controller
+        verify(outboundClient, never()).sendTextUpdate(eq("918888888888"), eq(WhatsAppConstants.ORDER_PACKING_ALERT));
+    }
+
+    @Test
+    void testEditOrder_CreatedOrder_Success() throws Exception {
+        String payload = createButtonReplyPayload("EDIT_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.editOrder(1042L)).thenReturn(CancellationResult.success(null, CancellationActor.CUSTOMER, "Customer Edited Order"));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).editOrder(1042L);
+        verify(outboundClient, never()).sendCatalogMessage(any());
+    }
+
+    @Test
+    void testEditOrder_AlreadyConfirmed_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("EDIT_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.editOrder(1042L)).thenReturn(CancellationResult.notAllowed(
+                "This order is already being prepared or out for delivery and can no longer be edited.",
+                null,
+                CancellationActor.CUSTOMER
+        ));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).editOrder(1042L);
+        verify(outboundClient).sendTextUpdate("918888888888", "This order is already being prepared or out for delivery and can no longer be edited.");
+    }
+
+    @Test
+    void testCancelOrder_Customer_DeliveredOrder_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("CANCEL_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Cancelled", CancellationActor.CUSTOMER))
+                .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.CUSTOMER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(outboundClient).sendTextUpdate("918888888888", "This order has already been delivered and cannot be cancelled.");
+    }
+
+    @Test
+    void testCancelOrder_Customer_AlreadyCancelled_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("CANCEL_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Cancelled", CancellationActor.CUSTOMER))
+                .thenReturn(CancellationResult.alreadyCancelled(null, CancellationActor.CUSTOMER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(outboundClient).sendTextUpdate("918888888888", "This order is already cancelled.");
+    }
+
+    @Test
+    void testRiderCancel_Delivered_FeedbackToRiderNotCustomer() throws Exception {
+        String payload = createButtonReplyPayload(WhatsAppConstants.RIDER_CANCEL_REASON + "UNREACHABLE_1042", "919999999999");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Unreachable", CancellationActor.RIDER))
+                .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.RIDER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Feedback is sent to rider (919999999999), not customer!
+        verify(outboundClient).sendTextUpdate("919999999999", "⚠️ This order has already been delivered and cannot be cancelled.");
     }
 
 
