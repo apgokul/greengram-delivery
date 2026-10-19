@@ -64,6 +64,12 @@ public class CustomerOrder {
     private Double deliveryLatitude;
     private Double deliveryLongitude;
 
+    @Column(name = "cancellation_reason")
+    private String cancellationReason;
+
+    @Column(name = "stock_reconciled", nullable = false)
+    private boolean stockReconciled = true;
+
     @OneToMany(mappedBy = "customerOrder", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items = new ArrayList<>();
 
@@ -77,7 +83,11 @@ public class CustomerOrder {
             case READY -> this.status == OrderStatus.PACKING;
             case DISPATCHED -> this.status == OrderStatus.READY;
             case DELIVERED -> this.status == OrderStatus.DISPATCHED;
-            case CANCELLED -> this.status == OrderStatus.CREATED || this.status == OrderStatus.PENDING_WAREHOUSE || this.status == OrderStatus.PACKING;
+            case CANCELLED -> this.status == OrderStatus.CREATED
+                    || this.status == OrderStatus.PENDING_WAREHOUSE
+                    || this.status == OrderStatus.PACKING
+                    || this.status == OrderStatus.READY
+                    || this.status == OrderStatus.DISPATCHED;
             default -> false;
         };
 

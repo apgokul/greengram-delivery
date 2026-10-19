@@ -93,12 +93,16 @@ public class BatchingService {
         // 3. Append each order as a checklist item
         int itemNumber = 1;
         for (CustomerOrder order : orders) {
-            manifestBuilder.append(String.format(
+            String itemLine = String.format(
                     WhatsAppConstants.RIDER_MANIFEST_ITEM_TEMPLATE,
                     itemNumber++,
                     order.getDisplayId(),
                     order.getTotalAmount().toString()
-            ));
+            );
+            if (order.getDeliveryLatitude() == null) {
+                itemLine = itemLine.trim() + " " + WhatsAppConstants.LOCATION_REQUIRED_BADGE + "\n\n";
+            }
+            manifestBuilder.append(itemLine);
         }
 
         // 4. Append the footer

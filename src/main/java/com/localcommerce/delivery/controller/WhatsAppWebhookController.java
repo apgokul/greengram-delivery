@@ -179,20 +179,13 @@ public class WhatsAppWebhookController {
 
                         // 2. Handle the outbound messaging based on the result!
                         if (!result.isSuccess()) {
-                            // Stock failed. Send the exact error message back to the customer.
+                            // Stock validation failed. Send error message back to the customer.
                             outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
                         } else {
-                            // Success! Get the saved order and customer
+                            // Success! Immediately send the invoice summary prompt with Confirm, Edit, and Cancel buttons
                             CustomerOrder savedOrder = result.getOrder();
                             Customer customer = savedOrder.getCustomer();
-
-                            // Check if we already have their location on file
-                            if (customer.getLatitude() != null && customer.getLongitude() != null) {
-                                String savedLocation = String.format("https://maps.google.com/?q=%s,%s", customer.getLatitude(), customer.getLongitude());
-                                outboundClient.sendReuseLocationPrompt(customer.getRecipientId(), savedOrder.getId(), savedLocation);
-                            } else {
-                                outboundClient.sendLocationRequestPrompt(customer.getRecipientId());
-                            }
+                            outboundClient.sendOrderSummaryPrompt(customer.getRecipientId(), savedOrder);
                         }
                     } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
                         if (phoneNumber != null && phoneNumber.equals(warehousePhoneNumber)) {
@@ -226,16 +219,58 @@ public class WhatsAppWebhookController {
                                 orderService.confirmSavedLocation(orderId);
                             } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
                                 outboundClient.sendLocationRequestPrompt(phoneNumber);
-                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, ""));
+                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER) || buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                                String idStr = buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER)
+                                        ? buttonId.replace(WhatsAppConstants.CONFIRM_ORDER, "")
+                                        : buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, "");
+                                Long orderId = Long.parseLong(idStr);
                                 try {
                                     orderService.finalizeOrderCheckout(orderId);
-                                    // Optional: Send a quick "Sending to store..." text to the customer so they know it worked
                                     outboundClient.sendTextUpdate(phoneNumber, WhatsAppConstants.ORDER_PACKING_ALERT);
                                 } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
                                     log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
                                     outboundClient.sendTextUpdate(phoneNumber, e.getMessage());
                                 }
+                            } else if (buttonId.startsWith(WhatsAppConstants.EDIT_ORDER)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.EDIT_ORDER, ""));
+                                orderService.cancelOrder(orderId, "Customer Edited Order", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+                                outboundClient.sendCatalogMessage(phoneNumber);
+                            } else if (buttonId.startsWith(WhatsAppConstants.CANCEL_ORDER)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CANCEL_ORDER, ""));
+                                orderService.cancelOrder(orderId, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+                            } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL_REASON)) {
+                                String remainder = buttonId.replace(WhatsAppConstants.RIDER_CANCEL_REASON, "");
+                                int lastUnder = remainder.lastIndexOf('_');
+                                String reasonCode = remainder.substring(0, lastUnder);
+                                Long orderId = Long.parseLong(remainder.substring(lastUnder + 1));
+                                String reasonDisplay = switch (reasonCode) {
+                                    case "UNREACHABLE" -> "Customer Unreachable";
+                                    case "WRONG_ADDR" -> "Address Not Found";
+                                    case "REJECTED" -> "Customer Refused";
+                                    default -> reasonCode;
+                                };
+                                orderService.cancelOrder(orderId, reasonDisplay, com.localcommerce.delivery.enums.CancellationActor.RIDER);
+                                outboundClient.sendTextUpdate(phoneNumber, "✅ Order #" + orderId + " delivery cancelled.");
+                            } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL)) {
+                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.RIDER_CANCEL, ""));
+                                outboundClient.sendRiderCancellationReasonsPrompt(phoneNumber, orderId);
+                            } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
+                                String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
+                                String[] parts = locPayload.split("_");
+                                Double lat = Double.parseDouble(parts[0]);
+                                Double lng = Double.parseDouble(parts[1]);
+                                List<Long> orderIds = new java.util.ArrayList<>();
+                                for (int i = 2; i < parts.length; i++) {
+                                    orderIds.add(Long.parseLong(parts[i]));
+                                }
+                                orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
+                            } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
+                                String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
+                                String[] parts = locPayload.split("_");
+                                Long orderId = Long.parseLong(parts[0]);
+                                Double lat = Double.parseDouble(parts[1]);
+                                Double lng = Double.parseDouble(parts[2]);
+                                orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
                             } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
                                     buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
                                     buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
@@ -249,6 +284,23 @@ public class WhatsAppWebhookController {
                             String listId = message.getInteractive().getList_reply().getId();
                             if (listId.startsWith(WhatsAppConstants.VIEW_ORDER)) {
                                 warehouseService.processListReply(phoneNumber, listId);
+                            } else if (listId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
+                                String locPayload = listId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
+                                String[] parts = locPayload.split("_");
+                                Double lat = Double.parseDouble(parts[0]);
+                                Double lng = Double.parseDouble(parts[1]);
+                                List<Long> orderIds = new java.util.ArrayList<>();
+                                for (int i = 2; i < parts.length; i++) {
+                                    orderIds.add(Long.parseLong(parts[i]));
+                                }
+                                orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
+                            } else if (listId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
+                                String locPayload = listId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
+                                String[] parts = locPayload.split("_");
+                                Long orderId = Long.parseLong(parts[0]);
+                                Double lat = Double.parseDouble(parts[1]);
+                                Double lng = Double.parseDouble(parts[2]);
+                                orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
                             }
                         }
                     }

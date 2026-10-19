@@ -212,6 +212,23 @@ export default function ChatMonitor() {
                                     <span className="chat-item-phone">{displayIdentifier(chat.phoneNumber)}</span>
                                     <span className="chat-item-time">{formatSnippetTime(chat.lastMessageTimestamp)}</span>
                                 </div>
+                                {chat.awaitingLocation && (
+                                    <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+                                        <span style={{
+                                            backgroundColor: '#fef3c7',
+                                            color: '#b45309',
+                                            fontSize: '0.72rem',
+                                            fontWeight: 600,
+                                            padding: '0.15rem 0.45rem',
+                                            borderRadius: '4px',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.25rem'
+                                        }}>
+                                            📍 Awaiting Location
+                                        </span>
+                                    </div>
+                                )}
                                 <div className="chat-item-snippet">
                                     <span className="snippet-direction">
                                         {chat.lastMessageDirection === 'OUTBOUND' ? 'Bot: ' : 'Customer: '}

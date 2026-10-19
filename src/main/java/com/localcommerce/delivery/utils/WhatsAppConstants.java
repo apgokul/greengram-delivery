@@ -15,7 +15,15 @@ public class WhatsAppConstants {
     // Customer interaction button prefixes
     public static final String REUSE_LOCATION = "REUSE_LOC_";
     public static final String NEW_LOCATION = "NEW_LOC_";
+    public static final String CONFIRM_ORDER = "CONFIRM_";
+    public static final String EDIT_ORDER = "EDIT_ORDER_";
+    public static final String CANCEL_ORDER = "CANCEL_ORDER_";
+    public static final String SETLOC_PREFIX = "SETLOC_";
+    public static final String SETLOC_ALL_PREFIX = "SETLOC_ALL_";
 
+    // Rider action button prefixes
+    public static final String RIDER_CANCEL = "RCANCEL_";
+    public static final String RIDER_CANCEL_REASON = "RCANCEL_REASON_";
 
     // Warehouse action button prefixes
     public static final String ACCEPT_ORDER = "ACCEPT_";
@@ -23,6 +31,9 @@ public class WhatsAppConstants {
     public static final String STOCK_ISSUE = "STOCK_ISSUE_";
     public static final String SET_DELIVERED = "DELIVERED_";
     public static final String VIEW_ORDER = "VIEW_ORDER_";
+
+    // Location badge
+    public static final String LOCATION_REQUIRED_BADGE = "⚠️ LOCATION REQUIRED";
 
     // ==================== Payload Keys ====================
     // Messaging product type

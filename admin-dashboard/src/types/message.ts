@@ -5,6 +5,7 @@ export interface ChatSummary {
     lastMessage: string;
     lastMessageTimestamp: string;
     lastMessageDirection: MessageDirection;
+    awaitingLocation?: boolean;
 }
 
 export interface WhatsAppMessageLog {
