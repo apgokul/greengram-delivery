@@ -76,18 +76,18 @@ public class WhatsAppConstants {
     // Location confirmation prompt
     public static final String REUSE_LOCATION_PROMPT =
             "🛒 We have your cart!\n\nShould we deliver to your saved default location?\n\n📍 %s";
-    public static final String REUSE_LOCATION_YES_BUTTON = "Use Saved Location";
-    public static final String REUSE_LOCATION_NEW_BUTTON = "Share New Location";
+    public static final String REUSE_LOCATION_YES_BUTTON = "📍 Use Saved Location";
+    public static final String REUSE_LOCATION_NEW_BUTTON = "📌 Share New Location";
 
     // Combined order confirmation and location request templates
     public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing GreenGram 💚\n\n🛵 *Your order will be delivered by this evening.*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*";
 
     public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing GreenGram 💚\n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\nChoose your saved location below or share your current location so we can deliver your order to the right place.\n\n📌 *Your saved location:*\n%s";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
 
     public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing GreenGram 💚\n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
 
     public static final String SAVED_LOCATION_STANDALONE_PROMPT =
             "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
