@@ -76,8 +76,30 @@ public class WhatsAppConstants {
     // Location confirmation prompt
     public static final String REUSE_LOCATION_PROMPT =
             "🛒 We have your cart!\n\nShould we deliver to your saved default location?\n\n📍 %s";
-    public static final String REUSE_LOCATION_YES_BUTTON = "✅ Yes, deliver here";
-    public static final String REUSE_LOCATION_NEW_BUTTON = "📍 Send new location";
+    public static final String REUSE_LOCATION_YES_BUTTON = "Use Saved Location";
+    public static final String REUSE_LOCATION_NEW_BUTTON = "Share New Location";
+
+    // Combined order confirmation and location request templates
+    public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
+            "*Your order is confirmed!*\n\nThank you for ordering with GreenGram. We're preparing your order and will keep you updated.";
+
+    public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
+            "*Your order is confirmed!*\n\nThank you for ordering with GreenGram. We're preparing your order.\n\nPlease choose your saved location or share a new location for delivery:\n%s";
+
+    public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
+            "*Your order is confirmed!*\n\nThank you for ordering with GreenGram. We're preparing your order.\n\nPlease share your delivery location so we can deliver your order to the right place.";
+
+    public static final String SAVED_LOCATION_STANDALONE_PROMPT =
+            "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
+
+    public static final String EDIT_ORDER_PROMPT =
+            "*Let's update your order*\n\nTo make changes, please open our catalogue, update your cart and submit your order again.";
+
+    public static final String LOCATION_CONFIRMED_NATURAL =
+            "Thanks! Your delivery location has been saved. We'll deliver your order to this location.";
+
+    public static final String ORDER_CANCELLED_CUSTOMER =
+            "Your order has been cancelled.";
 
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =

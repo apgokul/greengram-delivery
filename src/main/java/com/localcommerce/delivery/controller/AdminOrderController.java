@@ -1,5 +1,6 @@
 package com.localcommerce.delivery.controller;
 
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
@@ -72,15 +73,23 @@ public class AdminOrderController {
 
         log.info("Admin {} cancelling order {} with reason: {}", adminUser, id, reason);
         try {
-            orderService.cancelOrder(id, reason, CancellationActor.ADMIN);
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "orderId", id,
-                    "message", "Order successfully cancelled by administrator."
-            ));
-        } catch (IllegalStateException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            CancellationResult result = orderService.cancelOrder(id, reason, CancellationActor.ADMIN);
+            if (result.isSuccess()) {
+                return ResponseEntity.ok(Map.of(
+                        "success", true,
+                        "orderId", id,
+                        "message", "Order successfully cancelled by administrator."
+                ));
+            } else if (result.status() == CancellationResult.Status.ORDER_NOT_FOUND) {
+                return ResponseEntity.status(404).body(Map.of("error", result.message()));
+            } else {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "error", result.message(),
+                        "status", result.status().name()
+                ));
+            }
         } catch (Exception e) {
+            log.error("Unexpected error during admin cancellation of order {}: {}", id, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
     }
