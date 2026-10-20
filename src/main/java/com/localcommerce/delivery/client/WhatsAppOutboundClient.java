@@ -297,7 +297,7 @@ public class WhatsAppOutboundClient {
                                     ? item.getProduct().getCurrentPrice()
                                     : BigDecimal.ZERO);
                     BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
-                    return String.format(Locale.ROOT, "%d x %s: ₹%.2f", quantity, productName, lineTotal);
+                    return String.format(Locale.ROOT, "%dx %s: ₹%.2f", quantity, productName, lineTotal);
                 })
                 .collect(Collectors.joining("\n"));
     }
@@ -668,7 +668,7 @@ public class WhatsAppOutboundClient {
     public void sendCatalogMessage(String recipientId) {
         sendCatalogMessage(recipientId,
                 "Welcome to *GreenGram!* 🛒\n\n" +
-                        "Your everyday groceries, made easy.\n\n" +
+                        "Your grocery purchases made easy.\n\n" +
                         "Explore our products and place your order below. 👇");
     }
 

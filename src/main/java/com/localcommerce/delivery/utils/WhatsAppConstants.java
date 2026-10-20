@@ -81,19 +81,19 @@ public class WhatsAppConstants {
 
     // Combined order confirmation and location request templates
     public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*";
 
     public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
 
     public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by this evening.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
 
     public static final String SAVED_LOCATION_STANDALONE_PROMPT =
             "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
 
     public static final String EDIT_ORDER_PROMPT =
-            "*Let's update your order 🛒*\n\nNo problem! Browse our catalogue, update your cart, and send us your new order.";
+            "*Let's update your order 🛒*\n\nNo problem! Update your cart, and send us your new order.";
 
     public static final String LOCATION_CONFIRMED_NATURAL =
             "Thanks! Your delivery location has been saved. We'll deliver your order to this location.";
@@ -104,12 +104,12 @@ public class WhatsAppConstants {
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =
             "📍 *WHERE SHOULD WE DELIVER?*\n\n"
-                    + "Your cart is ready! 🛒\n\n"
-                    + "*Please send us your current location:*\n\n"
+                    + "Please share your location so we can deliver your order. ❤\uFE0F\n\n"
+                    + "_How to share:_\n\n"
                     + "📎 Tap the attachment icon\n"
                     + "📍 Select *Location*\n"
-                    + "📤 Tap *Send your current location*\n\n"
-                    + "This helps us deliver your order to the correct address. ❤️";
+                    + "📤 Tap *Send your current location*";
+
 
     // Order status alerts
     public static final String ORDER_PACKING_ALERT =
@@ -126,9 +126,9 @@ public class WhatsAppConstants {
 
     public static final String DELIVERED_ALERT =
             "📦 *Order delivered!*\n\n" +
-                    "We hope you enjoy your groceries!\n\n" +
+                    "Thank you for choosing *GreenGram*.\n\n" +
                     "If you have any questions or need help with your order, we're just a call away.\n\n" +
-                    "Thank you for choosing *GreenGram*. See you again soon! 😊";
+                    "See you again soon! 😊";
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 

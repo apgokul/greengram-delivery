@@ -8,13 +8,13 @@ import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.Customer;
 import com.localcommerce.delivery.model.CustomerOrder;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
 import com.localcommerce.delivery.repository.DeliveryRunRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
-import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
@@ -23,12 +23,12 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
 
 @Service
 @Transactional
@@ -202,7 +202,7 @@ public class OrderService {
         );
 
         if (candidateOrders.isEmpty()) {
-            outboundClient.sendTextUpdate(recipientId, "📍 Your location has been saved for your future orders.");
+            outboundClient.sendTextUpdate(recipientId, "📍 Your location has been updated & saved for your future orders.");
         } else if (candidateOrders.size() == 1) {
             CustomerOrder singleOrder = candidateOrders.get(0);
             transactionTemplate.execute(status -> {
