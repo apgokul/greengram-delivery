@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -155,9 +156,141 @@ class WhatsAppOutboundClientTest {
         String summary = outboundClient.buildOrderSummaryBody(order);
 
         assertTrue(summary.contains("🧾 *Order Invoice*"));
+        assertTrue(summary.contains("Order ID: #101"));
         assertTrue(summary.contains("*Items:*\n2x Chilli Powder (500g): ₹220.00"));
         assertTrue(summary.contains("💰 *Grand Total: ₹220.00*"));
         assertTrue(summary.contains("Tap below to confirm your order!"));
+    }
+
+    @Test
+    void testSendOrderSummaryPrompt_IncludesPersistedOrderIdAndPreservesButtons() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        Product product = new Product();
+        product.setName("Chilli Powder (500g)");
+
+        OrderItem item = new OrderItem();
+        item.setProduct(product);
+        item.setQuantity(2);
+        item.setLockedPrice(new BigDecimal("110.00"));
+
+        CustomerOrder order = new CustomerOrder();
+        order.setId(12345L);
+        order.setItems(new ArrayList<>(List.of(item)));
+        order.setTotalAmount(new BigDecimal("220.00"));
+
+        outboundClient.sendOrderSummaryPrompt("919876543210", order);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        Map<String, Object> body = entityCaptor.getValue().getBody();
+        assertEquals("interactive", body.get("type"));
+
+        Map<String, Object> interactive = (Map<String, Object>) body.get("interactive");
+        assertEquals("button", interactive.get("type"));
+
+        Map<String, Object> bodyTextMap = (Map<String, Object>) interactive.get("body");
+        String text = (String) bodyTextMap.get("text");
+
+        assertTrue(text.contains("🧾 *Order Invoice*"));
+        assertTrue(text.contains("Order ID: #12345"));
+        assertTrue(text.contains("*Items:*\n2x Chilli Powder (500g): ₹220.00"));
+        assertTrue(text.contains("💰 *Grand Total: ₹220.00*"));
+        assertTrue(text.contains("Tap below to confirm your order!"));
+
+        Map<String, Object> action = (Map<String, Object>) interactive.get("action");
+        Object[] buttons = (Object[]) action.get("buttons");
+        assertEquals(3, buttons.length);
+
+        Map<String, Object> b1 = (Map<String, Object>) buttons[0];
+        Map<String, Object> reply1 = (Map<String, Object>) b1.get("reply");
+        assertEquals("CONFIRM_12345", reply1.get("id"));
+        assertEquals("✅ Confirm Order", reply1.get("title"));
+
+        Map<String, Object> b2 = (Map<String, Object>) buttons[1];
+        Map<String, Object> reply2 = (Map<String, Object>) b2.get("reply");
+        assertEquals("EDIT_ORDER_12345", reply2.get("id"));
+        assertEquals("✏️ Edit Order", reply2.get("title"));
+
+        Map<String, Object> b3 = (Map<String, Object>) buttons[2];
+        Map<String, Object> reply3 = (Map<String, Object>) b3.get("reply");
+        assertEquals("CANCEL_ORDER_12345", reply3.get("id"));
+        assertEquals("❌ Cancel Order", reply3.get("title"));
+
+        verify(loggingService).logOutbound(
+                eq("919876543210"),
+                org.mockito.ArgumentMatchers.contains("Order ID: #12345"),
+                any()
+        );
+    }
+
+    @Test
+    void testSendOrderSummaryPrompt_MultipleOrders_CorrectOrderIdForRelevantOrder() {
+        ReflectionTestUtils.setField(outboundClient, "apiUrl", "http://meta-api");
+        ReflectionTestUtils.setField(outboundClient, "accessToken", "test_token");
+
+        when(restTemplate.postForEntity(eq("http://meta-api"), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"success\":true}"));
+
+        Product product = new Product();
+        product.setName("Rice");
+
+        OrderItem item1 = new OrderItem();
+        item1.setProduct(product);
+        item1.setQuantity(1);
+        item1.setLockedPrice(new BigDecimal("100.00"));
+
+        CustomerOrder order1 = new CustomerOrder();
+        order1.setId(1001L);
+        order1.setItems(new ArrayList<>(List.of(item1)));
+        order1.setTotalAmount(new BigDecimal("100.00"));
+
+        OrderItem item2 = new OrderItem();
+        item2.setProduct(product);
+        item2.setQuantity(2);
+        item2.setLockedPrice(new BigDecimal("100.00"));
+
+        CustomerOrder order2 = new CustomerOrder();
+        order2.setId(1002L);
+        order2.setItems(new ArrayList<>(List.of(item2)));
+        order2.setTotalAmount(new BigDecimal("200.00"));
+
+        outboundClient.sendOrderSummaryPrompt("919876543210", order1);
+        outboundClient.sendOrderSummaryPrompt("919876543211", order2);
+
+        ArgumentCaptor<HttpEntity<Map<String, Object>>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+        verify(restTemplate, org.mockito.Mockito.times(2)).postForEntity(eq("http://meta-api"), entityCaptor.capture(), eq(String.class));
+
+        List<HttpEntity<Map<String, Object>>> captured = entityCaptor.getAllValues();
+
+        // Check order 1 payload
+        Map<String, Object> body1 = captured.get(0).getBody();
+        Map<String, Object> interactive1 = (Map<String, Object>) body1.get("interactive");
+        String text1 = (String) ((Map<String, Object>) interactive1.get("body")).get("text");
+        assertTrue(text1.contains("Order ID: #1001"));
+        assertFalse(text1.contains("Order ID: #1002"));
+
+        Object[] buttons1 = (Object[]) ((Map<String, Object>) interactive1.get("action")).get("buttons");
+        assertEquals("CONFIRM_1001", ((Map<String, Object>) ((Map<String, Object>) buttons1[0]).get("reply")).get("id"));
+        assertEquals("EDIT_ORDER_1001", ((Map<String, Object>) ((Map<String, Object>) buttons1[1]).get("reply")).get("id"));
+        assertEquals("CANCEL_ORDER_1001", ((Map<String, Object>) ((Map<String, Object>) buttons1[2]).get("reply")).get("id"));
+
+        // Check order 2 payload
+        Map<String, Object> body2 = captured.get(1).getBody();
+        Map<String, Object> interactive2 = (Map<String, Object>) body2.get("interactive");
+        String text2 = (String) ((Map<String, Object>) interactive2.get("body")).get("text");
+        assertTrue(text2.contains("Order ID: #1002"));
+        assertFalse(text2.contains("Order ID: #1001"));
+
+        Object[] buttons2 = (Object[]) ((Map<String, Object>) interactive2.get("action")).get("buttons");
+        assertEquals("CONFIRM_1002", ((Map<String, Object>) ((Map<String, Object>) buttons2[0]).get("reply")).get("id"));
+        assertEquals("EDIT_ORDER_1002", ((Map<String, Object>) ((Map<String, Object>) buttons2[1]).get("reply")).get("id"));
+        assertEquals("CANCEL_ORDER_1002", ((Map<String, Object>) ((Map<String, Object>) buttons2[2]).get("reply")).get("id"));
     }
 
     @Test

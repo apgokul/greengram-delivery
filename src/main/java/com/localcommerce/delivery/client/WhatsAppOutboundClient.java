@@ -286,6 +286,7 @@ public class WhatsAppOutboundClient {
 
         return String.format(
                 WhatsAppConstants.ORDER_SUMMARY,
+                order.getId() != null ? order.getId() : "",
                 itemList, formattedGrandTotal
         );
     }
