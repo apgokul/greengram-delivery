@@ -201,15 +201,15 @@ public class WhatsAppConstants {
     public static final String ORDER_SUMMARY =
             """
             🧾 *Order Invoice*
-            
+            Order ID: #%s
+
             *Items:*
             %s
-            
+
             ---------------------------
             💰 *Grand Total: ₹%s*
-            
-            Tap below to confirm your order!""";
 
+            Tap below to confirm your order!""";
 }
 
 
