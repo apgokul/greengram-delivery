@@ -11,6 +11,7 @@ import com.localcommerce.delivery.repository.InventoryAuditLogRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,32 +51,62 @@ public class ProductAdminService {
     }
 
     @Transactional
-    public InventoryDTO updateInventoryStock(Long inventoryId, java.math.BigDecimal newStock, String adminUser) {
-        Inventory inventory = inventoryRepo.findById(inventoryId)
-                .orElseThrow(() -> new RuntimeException("Inventory not found with id: " + inventoryId));
-
-        java.math.BigDecimal oldStock = inventory.getStockQuantity() != null ? inventory.getStockQuantity() : java.math.BigDecimal.ZERO;
-
-        if (newStock.compareTo(java.math.BigDecimal.ZERO) < 0) {
-            throw new IllegalArgumentException("Cannot adjust stock below zero! Current stock: " + oldStock);
+    public InventoryDTO adjustInventoryStock(Long inventoryId, java.math.BigDecimal adjustmentQuantity, String reason, String adminUser) {
+        if (adjustmentQuantity == null) {
+            throw new IllegalArgumentException("adjustmentQuantity is required");
+        }
+        if (adjustmentQuantity.compareTo(java.math.BigDecimal.ZERO) == 0) {
+            throw new IllegalArgumentException("Adjustment quantity cannot be zero");
         }
 
+        // 1. Acquire Level 2 pessimistic write lock on the Inventory row
+        Inventory inventory = inventoryRepo.findByIdForUpdate(inventoryId)
+                .orElseThrow(() -> new EntityNotFoundException("Inventory not found with id: " + inventoryId));
+
+        // 2. Read current stock strictly under the acquired lock
+        java.math.BigDecimal oldStock = inventory.getStockQuantity() != null ? inventory.getStockQuantity() : java.math.BigDecimal.ZERO;
+
+        // 3. Compute new stock: newStock = currentStock + delta
+        java.math.BigDecimal newStock = oldStock.add(adjustmentQuantity);
+
+        // 4. Reject adjustment if resulting stock would be negative
+        if (newStock.compareTo(java.math.BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException(String.format("Cannot adjust stock below zero! Current stock: %s, requested adjustment: %s", oldStock, adjustmentQuantity));
+        }
+
+        // 5. Persist the updated stock
         inventory.setStockQuantity(newStock);
         Inventory savedInventory = inventoryRepo.save(inventory);
 
+        // 6. Write audit log atomically within the same transaction
         InventoryAuditLog auditLog = new InventoryAuditLog();
-        auditLog.setSku(inventory.getBaseSku()); // Audit log currently tracks SKU. Let's use baseSku for inventory.
-        auditLog.setOldStock(oldStock.intValue()); // Note: keeping intValue() as per existing audit log logic, or should update schema. We'll leave as intValue() for now to avoid breaking DB.
-        auditLog.setNewStock(newStock.intValue());
-        auditLog.setChangeAmount(newStock.subtract(oldStock).intValue());
-        auditLog.setReason("INVENTORY_UPDATE");
-        auditLog.setChangedBy(adminUser);
+        auditLog.setSku(inventory.getBaseSku());
+        auditLog.setOldStock(oldStock);
+        auditLog.setNewStock(newStock);
+        auditLog.setChangeAmount(adjustmentQuantity);
+        auditLog.setReason(reason != null && !reason.isBlank() ? reason.trim() : "INVENTORY_ADJUSTMENT");
+        auditLog.setChangedBy(adminUser != null ? adminUser : "Unknown_Admin");
         auditRepo.save(auditLog);
 
-        log.info("🛡️ AUDIT: Inventory {} stock changed from {} to {}. User: {}",
-                inventory.getBaseSku(), oldStock, newStock, adminUser);
+        log.info("🛡️ AUDIT: Inventory {} stock adjusted from {} to {} (delta: {}). User: {}",
+                inventory.getBaseSku(), oldStock, newStock, adjustmentQuantity, adminUser);
 
         return convertToInventoryDTO(savedInventory);
+    }
+
+    @Transactional
+    public InventoryDTO updateInventoryStock(Long inventoryId, java.math.BigDecimal newStock, String adminUser) {
+        if (newStock == null) {
+            throw new IllegalArgumentException("newStock is required");
+        }
+        Inventory inventory = inventoryRepo.findByIdForUpdate(inventoryId)
+                .orElseThrow(() -> new EntityNotFoundException("Inventory not found with id: " + inventoryId));
+        java.math.BigDecimal oldStock = inventory.getStockQuantity() != null ? inventory.getStockQuantity() : java.math.BigDecimal.ZERO;
+        java.math.BigDecimal delta = newStock.subtract(oldStock);
+        if (delta.compareTo(java.math.BigDecimal.ZERO) == 0) {
+            return convertToInventoryDTO(inventory);
+        }
+        return adjustInventoryStock(inventoryId, delta, "INVENTORY_UPDATE", adminUser);
     }
 
     public List<InventoryDTO> getAllInventories() {
@@ -129,11 +160,14 @@ public class ProductAdminService {
         Product savedProduct = productRepo.save(newProduct);
 
         // 4. Log the initial setup (stock is managed via inventory now, but keeping log entry for product creation is good)
+        java.math.BigDecimal initialStock = (parentInventory.getStockQuantity() != null)
+                ? parentInventory.getStockQuantity()
+                : java.math.BigDecimal.ZERO;
         InventoryAuditLog auditLog = new InventoryAuditLog();
         auditLog.setSku(savedProduct.getSku());
-        auditLog.setOldStock(0);
-        auditLog.setNewStock(parentInventory.getStockQuantity() != null ? parentInventory.getStockQuantity().intValue() : 0);
-        auditLog.setChangeAmount(0);
+        auditLog.setOldStock(initialStock);
+        auditLog.setNewStock(initialStock);
+        auditLog.setChangeAmount(java.math.BigDecimal.ZERO);
         auditLog.setReason("INITIAL_PRODUCT_SETUP");
         auditLog.setChangedBy(adminUser);
         auditRepo.save(auditLog);
@@ -177,11 +211,14 @@ public class ProductAdminService {
         Product savedProduct = productRepo.save(product);
 
         // 3. Log the action in the audit trail
+        java.math.BigDecimal currentStock = (product.getInventory() != null && product.getInventory().getStockQuantity() != null)
+                ? product.getInventory().getStockQuantity()
+                : java.math.BigDecimal.ZERO;
         InventoryAuditLog auditLog = new InventoryAuditLog();
         auditLog.setSku(sku);
-        auditLog.setOldStock(product.getInventory() != null && product.getInventory().getStockQuantity() != null ? product.getInventory().getStockQuantity().intValue() : 0);
-        auditLog.setNewStock(product.getInventory() != null && product.getInventory().getStockQuantity() != null ? product.getInventory().getStockQuantity().intValue() : 0);
-        auditLog.setChangeAmount(0);
+        auditLog.setOldStock(currentStock);
+        auditLog.setNewStock(currentStock);
+        auditLog.setChangeAmount(java.math.BigDecimal.ZERO);
         auditLog.setReason(isActive ? "PRODUCT_ACTIVATED" : "PRODUCT_DEACTIVATED");
         auditLog.setChangedBy(adminUser);
         auditRepo.save(auditLog);
@@ -192,7 +229,7 @@ public class ProductAdminService {
         return convertToProductDTO(savedProduct);
     }
 
-    public List<ProductDTO> getAllProducts() { 
-        return productRepo.findAll().stream().map(this::convertToProductDTO).toList(); 
+    public List<ProductDTO> getAllProducts() {
+        return productRepo.findAllWithInventory().stream().map(this::convertToProductDTO).toList();
     }
 }

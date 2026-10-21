@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Repository
 public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, Long> {
@@ -25,6 +26,9 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, Lo
     // Used by the warehouse dashboard to see what needs to be packed right now
     // e.g., findByStatus(OrderStatus.ACCEPTED)
     List<CustomerOrder> findByStatus(OrderStatus status);
+
+    @Query("SELECT o.id FROM CustomerOrder o WHERE o.status = :status ORDER BY o.id ASC")
+    List<Long> findIdsByStatusOrderByIdAsc(@Param("status") OrderStatus status);
 
     // Finds all orders for a specific customer (useful for order history)
     List<CustomerOrder> findByCustomerIdOrderByCreatedAtDesc(Long customerId);
@@ -65,4 +69,16 @@ public interface CustomerOrderRepository extends JpaRepository<CustomerOrder, Lo
 
     // Queries orders requiring manual stock reconciliation after cancellation
     List<CustomerOrder> findByStockReconciledFalse();
+
+    @Query("""
+        SELECT DISTINCT o.customer.whatsappNumber
+        FROM CustomerOrder o
+        WHERE o.customer.whatsappNumber IN :whatsappNumbers
+          AND o.status IN :statuses
+          AND o.deliveryLatitude IS NULL
+    """)
+    Set<String> findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+            @Param("whatsappNumbers") Collection<String> whatsappNumbers,
+            @Param("statuses") Collection<OrderStatus> statuses
+    );
 }

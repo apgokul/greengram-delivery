@@ -63,10 +63,24 @@ class AdminOrderControllerTest {
                 .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.ADMIN));
 
         mockMvc.perform(post("/api/admin/orders/1042/cancel")
-                        .header("X-Admin-User", "SuperAdmin"))
+                        .principal(() -> "SuperAdmin"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("This order has already been delivered and cannot be cancelled."))
                 .andExpect(jsonPath("$.status").value("ALREADY_DELIVERED"));
+    }
+
+    @Test
+    void testCancelOrderAsAdmin_AuthenticatedPrincipalOverridesSpoofedHeader() throws Exception {
+        when(orderService.cancelOrder(1042L, "Administrative cancellation by alice", CancellationActor.ADMIN))
+                .thenReturn(CancellationResult.success(null, CancellationActor.ADMIN, "Administrative cancellation by alice"));
+
+        mockMvc.perform(post("/api/admin/orders/1042/cancel")
+                        .principal(() -> "alice")
+                        .header("X-Admin-User", "bob"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(orderService).cancelOrder(1042L, "Administrative cancellation by alice", CancellationActor.ADMIN);
     }
 
     @Test

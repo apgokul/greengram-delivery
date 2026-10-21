@@ -18,5 +18,6 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     // Used during checkout to lock in the price and check stock
     Optional<Product> findBySku(String sku);
 
-
+    @Query("SELECT p FROM Product p LEFT JOIN FETCH p.inventory")
+    List<Product> findAllWithInventory();
 }

@@ -165,153 +165,169 @@ public class WhatsAppWebhookController {
 
                     // Set context thread for logging
                     UserContext.setSenderId(primaryCustomerKey);
+                    try {
+                        String messageType = message.getType();
+                        if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
+                            List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
+                            List<CartItemDTO> internalCart = metaItems.stream()
+                                    .map(item -> new CartItemDTO(
+                                            item.getProductRetailerId(),
+                                            Integer.parseInt(item.getQuantity())
+                                    ))
+                                    .toList();
 
-                    String messageType = message.getType();
-                    if (WhatsAppConstants.MESSAGE_TYPE_ORDER.equals(messageType)) {
-                        List<WhatsAppWebhookPayload.ProductItem> metaItems = message.getOrder().getProductItems();
-                        List<CartItemDTO> internalCart = metaItems.stream()
-                                .map(item -> new CartItemDTO(
-                                        item.getProductRetailerId(),
-                                        Integer.parseInt(item.getQuantity())
-                                ))
-                                .toList();
+                            OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
 
-                        OrderProcessing.OrderProcessResult result = orderService.processNewCart(primaryCustomerKey, phoneNumber, whatsappName, internalCart);
-
-                        // 2. Handle the outbound messaging based on the result!
-                        if (!result.isSuccess()) {
-                            // Stock validation failed. Send error message back to the customer.
-                            outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
-                        } else {
-                            // Success! Immediately send the invoice summary prompt with Confirm, Edit, and Cancel buttons
-                            CustomerOrder savedOrder = result.getOrder();
-                            Customer customer = savedOrder.getCustomer();
-                            outboundClient.sendOrderSummaryPrompt(customer.getRecipientId(), savedOrder);
-                        }
-                    } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
-                        if (phoneNumber != null && phoneNumber.equals(warehousePhoneNumber)) {
-                            warehouseService.sendPendingOrdersInbox(phoneNumber);
-                            return ResponseEntity.ok().build();
-                        }
-
-                        String command = message.getText().getBody().trim().toUpperCase();
-
-                        if ("DISPATCH".equals(command)) {
-                            if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
-                                batchingService.createManualBatchRun(phoneNumber);
+                            // 2. Handle the outbound messaging based on the result!
+                            if (!result.isSuccess()) {
+                                // Stock validation failed. Send error message back to the customer.
+                                outboundClient.sendTextUpdate(phoneNumber, result.getMessage());
                             } else {
-                                log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
-                                outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
-                            }
-                        } else {
-                            // Send the static catalog instruction message
-                            outboundClient.sendCatalogMessage(phoneNumber);
-                        }
-                    } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
-                        Double lat = message.getLocation().getLatitude();
-                        Double lng = message.getLocation().getLongitude();
-                        orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
-                    } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
-                        if (message.getInteractive().getButton_reply() != null) {
-                            String buttonId = message.getInteractive().getButton_reply().getId();
-
-                            if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
-                                orderService.confirmSavedLocation(orderId);
-                            } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
-                                outboundClient.sendLocationRequestPrompt(phoneNumber);
-                            } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER) || buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
-                                String idStr = buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER)
-                                        ? buttonId.replace(WhatsAppConstants.CONFIRM_ORDER, "")
-                                        : buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, "");
-                                Long orderId = Long.parseLong(idStr);
+                                // Success! Order is committed in CREATED status. Handle notification locally to avoid misleading apologies.
+                                CustomerOrder savedOrder = result.getOrder();
+                                Customer customer = savedOrder.getCustomer();
+                                String recipientId = (customer != null && customer.getRecipientId() != null)
+                                        ? customer.getRecipientId()
+                                        : phoneNumber;
                                 try {
-                                    orderService.finalizeOrderCheckout(orderId);
-                                } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
-                                    log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
-                                    outboundClient.sendTextUpdate(phoneNumber, e.getMessage());
+                                    outboundClient.sendOrderSummaryPrompt(recipientId, savedOrder);
+                                } catch (Exception ex) {
+                                    log.error("Failed to deliver order summary prompt for persisted order {} (displayId: {}) to recipient {}: {}",
+                                            savedOrder.getId(), savedOrder.getDisplayId(), recipientId, ex.getMessage(), ex);
+                                    // Order is already safely committed; do not propagate to the outer catch
+                                    // which would send a generic apology instructing the customer to restart.
                                 }
-                            } else if (buttonId.startsWith(WhatsAppConstants.EDIT_ORDER)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.EDIT_ORDER, ""));
-                                CancellationResult res = orderService.editOrder(orderId);
-                                if (!res.isSuccess()) {
-                                    outboundClient.sendTextUpdate(phoneNumber, res.message());
-                                }
-                            } else if (buttonId.startsWith(WhatsAppConstants.CANCEL_ORDER)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CANCEL_ORDER, ""));
-                                CancellationResult res = orderService.cancelOrder(orderId, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
-                                if (!res.isSuccess()) {
-                                    outboundClient.sendTextUpdate(phoneNumber, res.message());
-                                }
-                            } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL_REASON)) {
-                                String remainder = buttonId.replace(WhatsAppConstants.RIDER_CANCEL_REASON, "");
-                                int lastUnder = remainder.lastIndexOf('_');
-                                String reasonCode = remainder.substring(0, lastUnder);
-                                Long orderId = Long.parseLong(remainder.substring(lastUnder + 1));
-                                String reasonDisplay = switch (reasonCode) {
-                                    case "UNREACHABLE" -> "Customer Unreachable";
-                                    case "WRONG_ADDR" -> "Address Not Found";
-                                    case "REJECTED" -> "Customer Refused";
-                                    default -> reasonCode;
-                                };
-                                CancellationResult res = orderService.cancelOrder(orderId, reasonDisplay, com.localcommerce.delivery.enums.CancellationActor.RIDER);
-                                if (res.isSuccess()) {
-                                    outboundClient.sendTextUpdate(phoneNumber, "✅ Order #" + orderId + " delivery cancelled.");
-                                } else {
-                                    outboundClient.sendTextUpdate(phoneNumber, "⚠️ " + res.message());
-                                }
-                            } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.RIDER_CANCEL, ""));
-                                outboundClient.sendRiderCancellationReasonsPrompt(phoneNumber, orderId);
-                            } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
-                                String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
-                                String[] parts = locPayload.split("_");
-                                Double lat = Double.parseDouble(parts[0]);
-                                Double lng = Double.parseDouble(parts[1]);
-                                List<Long> orderIds = new java.util.ArrayList<>();
-                                for (int i = 2; i < parts.length; i++) {
-                                    orderIds.add(Long.parseLong(parts[i]));
-                                }
-                                orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
-                            } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
-                                String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
-                                String[] parts = locPayload.split("_");
-                                Long orderId = Long.parseLong(parts[0]);
-                                Double lat = Double.parseDouble(parts[1]);
-                                Double lng = Double.parseDouble(parts[2]);
-                                orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
-                            } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
-                                    buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
-                                    buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
-
-                                warehouseService.processButtonTap(phoneNumber, buttonId);
-                            } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
-                                Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
-                                orderService.completeDelivery(orderId);
                             }
-                        } else if (message.getInteractive().getList_reply() != null) {
-                            String listId = message.getInteractive().getList_reply().getId();
-                            if (listId.startsWith(WhatsAppConstants.VIEW_ORDER)) {
-                                warehouseService.processListReply(phoneNumber, listId);
-                            } else if (listId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
-                                String locPayload = listId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
-                                String[] parts = locPayload.split("_");
-                                Double lat = Double.parseDouble(parts[0]);
-                                Double lng = Double.parseDouble(parts[1]);
-                                List<Long> orderIds = new java.util.ArrayList<>();
-                                for (int i = 2; i < parts.length; i++) {
-                                    orderIds.add(Long.parseLong(parts[i]));
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_TEXT.equals(messageType)) {
+                            if (phoneNumber != null && phoneNumber.equals(warehousePhoneNumber)) {
+                                warehouseService.sendPendingOrdersInbox(phoneNumber);
+                                return ResponseEntity.ok().build();
+                            }
+
+                            String command = message.getText().getBody().trim().toUpperCase();
+
+                            if ("DISPATCH".equals(command)) {
+                                if (phoneNumber != null && authorizedRiders.contains(phoneNumber)) {
+                                    batchingService.createManualBatchRun(phoneNumber);
+                                } else {
+                                    log.warn("SECURITY: Unauthorized attempt to DISPATCH from: {}", phoneNumber);
+                                    outboundClient.sendTextUpdate(phoneNumber, "⚠️ You are not authorized to dispatch orders.");
                                 }
-                                orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
-                            } else if (listId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
-                                String locPayload = listId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
-                                String[] parts = locPayload.split("_");
-                                Long orderId = Long.parseLong(parts[0]);
-                                Double lat = Double.parseDouble(parts[1]);
-                                Double lng = Double.parseDouble(parts[2]);
-                                orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
+                            } else {
+                                // Send the static catalog instruction message
+                                outboundClient.sendCatalogMessage(phoneNumber);
+                            }
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_LOCATION.equals(messageType)) {
+                            Double lat = message.getLocation().getLatitude();
+                            Double lng = message.getLocation().getLongitude();
+                            orderService.updateCustomerLocation(primaryCustomerKey, lat, lng);
+                        } else if (WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE.equals(messageType)) {
+                            if (message.getInteractive().getButton_reply() != null) {
+                                String buttonId = message.getInteractive().getButton_reply().getId();
+
+                                if (buttonId.startsWith(WhatsAppConstants.REUSE_LOCATION)) {
+                                    Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.REUSE_LOCATION, ""));
+                                    orderService.confirmSavedLocation(orderId, phoneNumber);
+                                } else if (buttonId.startsWith(WhatsAppConstants.NEW_LOCATION)) {
+                                    outboundClient.sendLocationRequestPrompt(phoneNumber);
+                                } else if (buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER) || buttonId.startsWith(WhatsAppConstants.CONFIRM_CHECKOUT)) {
+                                    String idStr = buttonId.startsWith(WhatsAppConstants.CONFIRM_ORDER)
+                                            ? buttonId.replace(WhatsAppConstants.CONFIRM_ORDER, "")
+                                            : buttonId.replace(WhatsAppConstants.CONFIRM_CHECKOUT, "");
+                                    Long orderId = Long.parseLong(idStr);
+                                    try {
+                                        orderService.finalizeOrderCheckout(orderId);
+                                    } catch (com.localcommerce.delivery.exception.OrderValidationException e) {
+                                        log.warn("Checkout validation failed for order {}: {}", orderId, e.getMessage());
+                                        outboundClient.sendTextUpdate(phoneNumber, e.getMessage());
+                                    }
+                                } else if (buttonId.startsWith(WhatsAppConstants.EDIT_ORDER)) {
+                                    Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.EDIT_ORDER, ""));
+                                    CancellationResult res = orderService.editOrder(orderId);
+                                    if (!res.isSuccess()) {
+                                        outboundClient.sendTextUpdate(phoneNumber, res.message());
+                                    }
+                                } else if (buttonId.startsWith(WhatsAppConstants.CANCEL_ORDER)) {
+                                    Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.CANCEL_ORDER, ""));
+                                    CancellationResult res = orderService.cancelOrder(orderId, "Customer Cancelled", com.localcommerce.delivery.enums.CancellationActor.CUSTOMER);
+                                    if (!res.isSuccess()) {
+                                        outboundClient.sendTextUpdate(phoneNumber, res.message());
+                                    }
+                                } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL_REASON)) {
+                                    String remainder = buttonId.replace(WhatsAppConstants.RIDER_CANCEL_REASON, "");
+                                    int lastUnder = remainder.lastIndexOf('_');
+                                    String reasonCode = remainder.substring(0, lastUnder);
+                                    Long orderId = Long.parseLong(remainder.substring(lastUnder + 1));
+                                    String reasonDisplay = switch (reasonCode) {
+                                        case "UNREACHABLE" -> "Customer Unreachable";
+                                        case "WRONG_ADDR" -> "Address Not Found";
+                                        case "REJECTED" -> "Customer Refused";
+                                        default -> reasonCode;
+                                    };
+                                    CancellationResult res = orderService.cancelOrder(orderId, reasonDisplay, com.localcommerce.delivery.enums.CancellationActor.RIDER);
+                                    if (res.isSuccess()) {
+                                        outboundClient.sendTextUpdate(phoneNumber, "✅ Order #" + orderId + " delivery cancelled.");
+                                    } else {
+                                        outboundClient.sendTextUpdate(phoneNumber, "⚠️ " + res.message());
+                                    }
+                                } else if (buttonId.startsWith(WhatsAppConstants.RIDER_CANCEL)) {
+                                    Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.RIDER_CANCEL, ""));
+                                    outboundClient.sendRiderCancellationReasonsPrompt(phoneNumber, orderId);
+                                } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
+                                    String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
+                                    String[] parts = locPayload.split("_");
+                                    Double lat = Double.parseDouble(parts[0]);
+                                    Double lng = Double.parseDouble(parts[1]);
+                                    List<Long> orderIds = new java.util.ArrayList<>();
+                                    for (int i = 2; i < parts.length; i++) {
+                                        orderIds.add(Long.parseLong(parts[i]));
+                                    }
+                                    orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
+                                } else if (buttonId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
+                                    String locPayload = buttonId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
+                                    String[] parts = locPayload.split("_");
+                                    Long orderId = Long.parseLong(parts[0]);
+                                    Double lat = Double.parseDouble(parts[1]);
+                                    Double lng = Double.parseDouble(parts[2]);
+                                    orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
+                                } else if (buttonId.startsWith(WhatsAppConstants.ACCEPT_ORDER) ||
+                                        buttonId.startsWith(WhatsAppConstants.STOCK_ISSUE) ||
+                                        buttonId.startsWith(WhatsAppConstants.READY_FOR_PICKUP)) {
+
+                                    warehouseService.processButtonTap(phoneNumber, buttonId);
+                                } else if (buttonId.startsWith(WhatsAppConstants.SET_DELIVERED)) {
+                                    Long orderId = Long.parseLong(buttonId.replace(WhatsAppConstants.SET_DELIVERED, ""));
+                                    orderService.completeDelivery(orderId);
+                                }
+                            } else if (message.getInteractive().getList_reply() != null) {
+                                String listId = message.getInteractive().getList_reply().getId();
+                                if (listId.startsWith(WhatsAppConstants.VIEW_ORDER)) {
+                                    warehouseService.processListReply(phoneNumber, listId);
+                                } else if (listId.startsWith(WhatsAppConstants.SETLOC_ALL_PREFIX)) {
+                                    String locPayload = listId.replace(WhatsAppConstants.SETLOC_ALL_PREFIX, "");
+                                    String[] parts = locPayload.split("_");
+                                    Double lat = Double.parseDouble(parts[0]);
+                                    Double lng = Double.parseDouble(parts[1]);
+                                    List<Long> orderIds = new java.util.ArrayList<>();
+                                    for (int i = 2; i < parts.length; i++) {
+                                        orderIds.add(Long.parseLong(parts[i]));
+                                    }
+                                    orderService.assignLocationToAllOrders(orderIds, phoneNumber, lat, lng);
+                                } else if (listId.startsWith(WhatsAppConstants.SETLOC_PREFIX)) {
+                                    String locPayload = listId.replace(WhatsAppConstants.SETLOC_PREFIX, "");
+                                    String[] parts = locPayload.split("_");
+                                    Long orderId = Long.parseLong(parts[0]);
+                                    Double lat = Double.parseDouble(parts[1]);
+                                    Double lng = Double.parseDouble(parts[2]);
+                                    orderService.assignLocationToOrder(orderId, phoneNumber, lat, lng);
+                                }
                             }
                         }
+                    } catch (Exception e) {
+                        log.error("CRITICAL WEBHOOK FAILURE: Error processing WhatsApp message from {}: {}", phoneNumber, e.getMessage(), e);
+                        sendFallbackApology(phoneNumber);
+                    } finally {
+                        UserContext.clear();
                     }
 
                 } else if (value.getStatuses() != null && !value.getStatuses().isEmpty()) {
@@ -331,8 +347,21 @@ public class WhatsAppWebhookController {
             }
         } catch (Exception e) {
             log.error("Error processing WhatsApp webhook payload", e);
+        } finally {
+            UserContext.clear();
         }
         return ResponseEntity.ok().build();
+    }
+
+    private void sendFallbackApology(String phoneNumber) {
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            return;
+        }
+        try {
+            outboundClient.sendTextUpdate(phoneNumber, com.localcommerce.delivery.exception.GlobalExceptionHandler.FALLBACK_APOLOGY_MESSAGE);
+        } catch (Exception ex) {
+            log.error("Failed to send fallback message to {}: {}", phoneNumber, ex.getMessage());
+        }
     }
 
 

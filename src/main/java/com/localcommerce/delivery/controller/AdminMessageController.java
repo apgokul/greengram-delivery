@@ -11,7 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/admin/messages")
@@ -33,16 +36,32 @@ public class AdminMessageController {
      */
     @GetMapping("/chats")
     public ResponseEntity<List<ChatSummaryDTO>> getActiveChats(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
+            Principal principal) {
+        String adminUser = resolveAdminUser(principal);
         log.debug("Admin {} fetching active WhatsApp chat list", adminUser);
 
         List<WhatsAppMessageLog> latestLogs = messageLogRepository.findLatestMessagePerChat();
 
+        List<String> distinctPhoneNumbers = latestLogs.stream()
+                .map(WhatsAppMessageLog::getPhoneNumber)
+                .filter(phone -> phone != null && !phone.isBlank())
+                .distinct()
+                .toList();
+
+        Set<String> awaitingLocationPhones;
+        if (distinctPhoneNumbers.isEmpty()) {
+            awaitingLocationPhones = Collections.emptySet();
+        } else {
+            Set<String> found = orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                    distinctPhoneNumbers, ACTIVE_STATUSES
+            );
+            awaitingLocationPhones = found != null ? found : Collections.emptySet();
+        }
+
         List<ChatSummaryDTO> summaries = latestLogs.stream()
                 .map(msgLog -> {
-                    boolean awaitingLoc = !orderRepo.findByCustomerWhatsappNumberAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(
-                            msgLog.getPhoneNumber(), ACTIVE_STATUSES
-                    ).isEmpty();
+                    boolean awaitingLoc = msgLog.getPhoneNumber() != null
+                            && awaitingLocationPhones.contains(msgLog.getPhoneNumber());
 
                     return ChatSummaryDTO.builder()
                             .phoneNumber(msgLog.getPhoneNumber())
@@ -91,8 +110,9 @@ public class AdminMessageController {
      */
     @GetMapping("/{phoneNumber}")
     public ResponseEntity<List<WhatsAppMessageLogDTO>> getChatHistory(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            Principal principal,
             @PathVariable String phoneNumber) {
+        String adminUser = resolveAdminUser(principal);
         String sanitizedIdentifier = normalizeCustomerIdentifier(phoneNumber);
         if (sanitizedIdentifier == null) {
             log.warn("Admin {} requested chat history with invalid or empty identifier: {}", adminUser, phoneNumber);
@@ -114,5 +134,12 @@ public class AdminMessageController {
                 .toList();
 
         return ResponseEntity.ok(dtos);
+    }
+
+    private String resolveAdminUser(Principal principal) {
+        if (principal != null && principal.getName() != null && !principal.getName().isBlank()) {
+            return principal.getName();
+        }
+        return "Unknown_Admin";
     }
 }

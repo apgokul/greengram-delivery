@@ -41,13 +41,11 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
             return;
         }
 
-        const adjustmentAmount = operation === 'ADD' ? quantity : -quantity;
-        const currentStock = product.inventory.stockQuantity || 0;
-        const newStock = currentStock + adjustmentAmount;
+        const delta = operation === 'ADD' ? quantity : -quantity;
 
         setLoading(true);
         try {
-            await productsApi.adjustStock(product.inventory.id, newStock);
+            await productsApi.adjustStock(product.inventory.id, delta, reason.trim() || undefined);
             onSuccess();
             onClose();
         } catch (err: any) {

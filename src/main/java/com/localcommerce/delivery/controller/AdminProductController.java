@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.Map;
 
 @RestController
@@ -17,14 +18,13 @@ public class AdminProductController {
 
     private final ProductAdminService adminService;
 
-
-
     // --- 1. CREATE A NEW PRODUCT ---
     @PostMapping
     public ResponseEntity<?> createProduct(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            Principal principal,
             @RequestBody com.localcommerce.delivery.dto.CreateProductDTO product) {
 
+        String adminUser = resolveAdminUser(principal);
         try {
             com.localcommerce.delivery.dto.ProductDTO createdProduct = adminService.createNewProduct(product, adminUser);
             return ResponseEntity.status(HttpStatus.CREATED).body(createdProduct);
@@ -37,10 +37,11 @@ public class AdminProductController {
     // --- 2. CHANGE PRODUCT PRICE ---
     @PatchMapping("/{sku}/price")
     public ResponseEntity<?> updatePrice(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            Principal principal,
             @PathVariable String sku,
             @RequestParam java.math.BigDecimal newPrice) {
 
+        String adminUser = resolveAdminUser(principal);
         try {
             com.localcommerce.delivery.dto.ProductDTO updatedProduct = adminService.updatePrice(sku, newPrice, adminUser);
 
@@ -60,10 +61,11 @@ public class AdminProductController {
     // Toggle active Status
     @PatchMapping("/{sku}/toggle-active")
     public ResponseEntity<?> toggleActiveStatus(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            Principal principal,
             @PathVariable String sku,
             @RequestParam boolean isActive) {
 
+        String adminUser = resolveAdminUser(principal);
         try {
             com.localcommerce.delivery.dto.ProductDTO updatedProduct = adminService.toggleActiveStatus(sku, isActive, adminUser);
 
@@ -80,12 +82,16 @@ public class AdminProductController {
     }
 
     @GetMapping
-    public ResponseEntity<?> getAllProducts(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
+    public ResponseEntity<?> getAllProducts() {
 
         // Assuming you have a standard findAll() in your ProductRepository
         return ResponseEntity.ok(adminService.getAllProducts());
     }
 
-
+    private String resolveAdminUser(Principal principal) {
+        if (principal != null && principal.getName() != null && !principal.getName().isBlank()) {
+            return principal.getName();
+        }
+        return "Unknown_Admin";
+    }
 }

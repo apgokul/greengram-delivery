@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.List;
 import java.util.Map;
 
@@ -28,7 +29,8 @@ public class AdminOrderController {
      */
     @GetMapping("/reconciliation-needed")
     public ResponseEntity<List<Map<String, Object>>> getOrdersRequiringReconciliation(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser) {
+            Principal principal) {
+        String adminUser = resolveAdminUser(principal);
         log.info("Admin {} fetching orders requiring stock reconciliation", adminUser);
 
         List<CustomerOrder> discrepancyOrders = orderRepo.findByStockReconciledFalse();
@@ -64,9 +66,10 @@ public class AdminOrderController {
      */
     @PostMapping("/{id}/cancel")
     public ResponseEntity<?> cancelOrderAsAdmin(
-            @RequestHeader(value = "X-Admin-User", defaultValue = "Unknown_Admin") String adminUser,
+            Principal principal,
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, String> payload) {
+        String adminUser = resolveAdminUser(principal);
         String reason = (payload != null && payload.containsKey("reason"))
                 ? payload.get("reason")
                 : "Administrative cancellation by " + adminUser;
@@ -92,5 +95,12 @@ public class AdminOrderController {
             log.error("Unexpected error during admin cancellation of order {}: {}", id, e.getMessage(), e);
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
         }
+    }
+
+    private String resolveAdminUser(Principal principal) {
+        if (principal != null && principal.getName() != null && !principal.getName().isBlank()) {
+            return principal.getName();
+        }
+        return "Unknown_Admin";
     }
 }

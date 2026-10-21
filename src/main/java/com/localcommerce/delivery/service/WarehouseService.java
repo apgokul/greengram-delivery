@@ -57,7 +57,7 @@ public class WarehouseService {
 
     public void processListReply(String senderNumber, String listId) {
         if (!senderNumber.equals(warehousePhoneNumber)) {
-            System.err.println("Unauthorized list reply attempt from: " + senderNumber);
+            log.warn("SECURITY: Unauthorized list reply attempt from: {}", senderNumber);
             return;
         }
 
@@ -79,7 +79,7 @@ public class WarehouseService {
         // SECURITY CHECK: Ensure this button tap actually came from your warehouse phone
         // WhatsApp doesn't send the '+' in the webhook sender number
         if (!senderNumber.equals(warehousePhoneNumber)) {
-            System.err.println("Unauthorized button tap attempt from: " + senderNumber);
+            log.warn("SECURITY: Unauthorized button tap attempt from: {}", senderNumber);
             return;
         }
 

@@ -29,7 +29,6 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WhatsAppOutboundClient {
 
@@ -42,17 +41,37 @@ public class WhatsAppOutboundClient {
     @Value("${warehouse.phone.number}")
     private String warehousePhoneNumber;
 
-
-
     private final RestTemplate restTemplate;
     private final SmsFallbackService smsFallbackService;
     private final com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
+    private final WhatsAppHttpSender httpSender;
     private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WhatsAppOutboundClient(RestTemplate restTemplate,
+                                  SmsFallbackService smsFallbackService,
+                                  com.localcommerce.delivery.service.WhatsAppLoggingService loggingService,
+                                  WhatsAppHttpSender httpSender) {
+        this.restTemplate = restTemplate;
+        this.smsFallbackService = smsFallbackService;
+        this.loggingService = loggingService;
+        this.httpSender = httpSender;
+    }
+
+    public WhatsAppOutboundClient(RestTemplate restTemplate,
+                                  SmsFallbackService smsFallbackService,
+                                  com.localcommerce.delivery.service.WhatsAppLoggingService loggingService) {
+        this(restTemplate, smsFallbackService, loggingService,
+                new WhatsAppHttpSender(restTemplate, smsFallbackService, loggingService));
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setClock(Clock clock) {
         if (clock != null) {
             this.clock = clock;
+            if (this.httpSender != null) {
+                this.httpSender.setClock(clock);
+            }
         }
     }
 
@@ -156,31 +175,22 @@ public class WhatsAppOutboundClient {
         sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
-    // Helper method to execute the HTTP call
-    @Retryable(
-            retryFor = {RestClientException.class},
-            backoff = @Backoff(delay = 2000) // Wait 2 seconds between tries
-    )
-    private void sendPostRequest(String toPhoneNumber, String loggedDescription, Map<String, Object> payload) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(accessToken);
-
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
-        // --- TEMPORARY MUTE FOR LOCAL TESTING ---
-        org.springframework.http.ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, request, String.class);
-
-        log.info("Successfully sent payload to Meta API.");
-
-        // Safe outbound logging hook:
-        // ONLY executes if postForEntity returned without throwing RestClientException.
-        // Persistence failure is caught here so it never propagates into @Retryable or the caller's business transaction.
-        if (response != null && (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().value() == 200)) {
-            try {
-                loggingService.logOutbound(toPhoneNumber, loggedDescription, LocalDateTime.now(clock));
-            } catch (Exception e) {
-                log.error("Failed to persist outbound WhatsApp message log for phone {}: {}", toPhoneNumber, e.getMessage());
+    // Helper method to execute the HTTP call via Spring-managed retry proxy
+    void sendPostRequest(String toPhoneNumber, String loggedDescription, Map<String, Object> payload) {
+        if (httpSender != null) {
+            if (httpSender.getApiUrl() == null && this.apiUrl != null) {
+                httpSender.setApiUrl(this.apiUrl);
             }
+            if (httpSender.getAccessToken() == null && this.accessToken != null) {
+                httpSender.setAccessToken(this.accessToken);
+            }
+            if (httpSender.getWarehousePhoneNumber() == null && this.warehousePhoneNumber != null) {
+                httpSender.setWarehousePhoneNumber(this.warehousePhoneNumber);
+            }
+            if (this.clock != null) {
+                httpSender.setClock(this.clock);
+            }
+            httpSender.sendPostRequest(toPhoneNumber, loggedDescription, payload);
         }
     }
 
@@ -347,29 +357,10 @@ public class WhatsAppOutboundClient {
         sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
-    @Recover
     public void handleMetaApiFailure(RestClientException e, Map<String, Object> payload) {
-        log.error("CRITICAL: Meta API completely unreachable after retries. Error: {}", e.getMessage());
-
-        //      1. Extract the intended recipient
-        String intendedRecipient = (String) payload.getOrDefault(WhatsAppConstants.TO, "Unknown");
-        log.error("Meta API completely unreachable. Failed to deliver message to: {}", intendedRecipient);
-
-        if (intendedRecipient.equals(warehousePhoneNumber)) {
-            // SCENARIO A: The warehouse didn't get the alert! This is an operational emergency.
-            String alertMessage = "🚨 URGENT: WhatsApp API is DOWN. " +
-                    "A new order was just placed but the warehouse bot is offline. " +
-                    "Please check the backend database immediately to pack the order!";
-
-            smsFallbackService.sendEmergencyAlert(alertMessage);
-        }
-        else {
-            // SCENARIO B: A customer update failed (e.g., "Out for delivery" alert dropped).
-            // We usually don't want to pay to SMS customers for every minor status update.
-            // Instead, we log it with a specific searchable tag so customer support knows
-            // why the user might call complaining about a lack of updates.
-            log.warn("[CUSTOMER_COMM_DROP] Failed to send WhatsApp update to customer {}. " +
-                    "Payload dump: {}", intendedRecipient, payload);
+        if (httpSender != null) {
+            String toPhoneNumber = payload != null ? (String) payload.get(WhatsAppConstants.TO) : null;
+            httpSender.handleMetaApiFailure(e, toPhoneNumber, null, payload);
         }
     }
 
