@@ -20,7 +20,9 @@ import com.localcommerce.delivery.model.OrderItem;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -530,10 +532,29 @@ public class WhatsAppOutboundClient {
         sendSavedLocationPrompt(toPhoneNumber, orderId, null, null);
     }
 
+    public String resolveDeliveryPromise(Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            throw new IllegalArgumentException("checkoutInstant must not be null to resolve delivery promise");
+        }
+        LocalTime time = checkoutInstant.atZone(WhatsAppConstants.ASIA_KOLKATA_ZONE).toLocalTime();
+        return WhatsAppConstants.getDeliveryPromise(time);
+    }
+
     public void sendCombinedOrderConfirmationPrompt(String toPhoneNumber, Long orderId, boolean hasSavedLocation, Double lat, Double lng) {
+        sendCombinedOrderConfirmationPrompt(toPhoneNumber, orderId, hasSavedLocation, lat, lng, null);
+    }
+
+    public void sendCombinedOrderConfirmationPrompt(String toPhoneNumber, Long orderId, boolean hasSavedLocation, Double lat, Double lng, Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            log.error("Missing required checkout timestamp for order {}. Refusing to send delivery confirmation.", orderId);
+            return;
+        }
+
+        String deliveryPromise = resolveDeliveryPromise(checkoutInstant);
+
         if (hasSavedLocation && lat != null && lng != null) {
             String mapsUrl = String.format(Locale.ROOT, "https://www.google.com/maps?q=%.6f,%.6f", lat, lng);
-            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT, mapsUrl);
+            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT, deliveryPromise, mapsUrl);
             Map<String, Object> body = Map.of(
                     WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
                     WhatsAppConstants.TO, toPhoneNumber,
@@ -563,12 +584,24 @@ public class WhatsAppOutboundClient {
             );
             sendPostRequest(toPhoneNumber, bodyText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]", body);
         } else {
-            sendTextUpdate(toPhoneNumber, WhatsAppConstants.ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT);
+            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT, deliveryPromise);
+            sendTextUpdate(toPhoneNumber, bodyText);
         }
     }
 
     public void sendOrderConfirmedConcise(String toPhoneNumber) {
-        sendTextUpdate(toPhoneNumber, WhatsAppConstants.ORDER_CONFIRMED_ALREADY_HAS_LOCATION);
+        sendOrderConfirmedConcise(toPhoneNumber, null);
+    }
+
+    public void sendOrderConfirmedConcise(String toPhoneNumber, Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            log.error("Missing required checkout timestamp when sending concise confirmation to {}. Refusing to send message.", toPhoneNumber);
+            return;
+        }
+
+        String deliveryPromise = resolveDeliveryPromise(checkoutInstant);
+        String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_ALREADY_HAS_LOCATION, deliveryPromise);
+        sendTextUpdate(toPhoneNumber, bodyText);
     }
 
     public void sendEditOrderPrompt(String toPhoneNumber) {

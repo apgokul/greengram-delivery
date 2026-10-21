@@ -79,15 +79,27 @@ public class WhatsAppConstants {
     public static final String REUSE_LOCATION_YES_BUTTON = "📍 Use Saved Location";
     public static final String REUSE_LOCATION_NEW_BUTTON = "📌 Share New Location";
 
+    // Cutoff time and delivery promises
+    public static final java.time.LocalTime EVENING_CUTOFF_TIME = java.time.LocalTime.of(18, 30);
+    public static final String DELIVERY_PROMISE_TODAY = "today evening";
+    public static final String DELIVERY_PROMISE_TOMORROW = "tomorrow evening";
+
+    public static String getDeliveryPromise(java.time.LocalTime time) {
+        if (time == null) {
+            throw new IllegalArgumentException("Time must not be null to determine delivery promise");
+        }
+        return time.isBefore(EVENING_CUTOFF_TIME) ? DELIVERY_PROMISE_TODAY : DELIVERY_PROMISE_TOMORROW;
+    }
+
     // Combined order confirmation and location request templates
     public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*";
 
     public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
 
     public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by today evening.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
+            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
 
     public static final String SAVED_LOCATION_STANDALONE_PROMPT =
             "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
@@ -98,8 +110,8 @@ public class WhatsAppConstants {
     public static final String LOCATION_CONFIRMED_NATURAL =
             "Thanks! Your delivery location has been saved. We'll deliver your order to this location.";
 
-    public static final String ORDER_CANCELLED_CUSTOMER =
-            "Your order has been cancelled.";
+
+    public static final String ORDER_CANCELLED_CUSTOMER = "Your order has been cancelled.";
 
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =
@@ -122,7 +134,7 @@ public class WhatsAppConstants {
                     "We'll notify you as soon as it's *out for delivery.*\n";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
-            "🛵 *Out for Delivery!*\n\nOur rider, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
+            "🛵 *Out for Delivery!*\n\nOur rider is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
 
     public static final String DELIVERED_ALERT =
             "📦 *Order delivered!*\n\n" +

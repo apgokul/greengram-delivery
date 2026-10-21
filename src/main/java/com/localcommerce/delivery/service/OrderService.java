@@ -27,6 +27,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -44,6 +46,14 @@ public class OrderService {
     private final CustomerIdentityService customerIdentityService;
     private final DeliveryRunRepository deliveryRepo;
     private final TransactionTemplate transactionTemplate;
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
 
     @Value("${store.latitude}")
     private Double storeLat;
@@ -376,19 +386,22 @@ public class OrderService {
         public final boolean hasSavedLocation;
         public final Double savedLat;
         public final Double savedLng;
+        public final Instant checkoutInstant;
 
         public CheckoutResult(CustomerOrder order,
                               List<com.localcommerce.delivery.model.Inventory> lowStockInventories,
                               boolean locationPromptNeeded,
                               boolean hasSavedLocation,
                               Double savedLat,
-                              Double savedLng) {
+                              Double savedLng,
+                              Instant checkoutInstant) {
             this.order = order;
             this.lowStockInventories = lowStockInventories;
             this.locationPromptNeeded = locationPromptNeeded;
             this.hasSavedLocation = hasSavedLocation;
             this.savedLat = savedLat;
             this.savedLng = savedLng;
+            this.checkoutInstant = checkoutInstant;
         }
     }
 
@@ -405,6 +418,8 @@ public class OrderService {
                         orderId, order.getStatus());
                 return null;
             }
+
+            Instant checkoutInstant = clock.instant();
 
             java.util.List<com.localcommerce.delivery.model.Inventory> lowStockInventories = new java.util.ArrayList<>();
 
@@ -480,7 +495,7 @@ public class OrderService {
                 customer.getRecipientId();
             }
 
-            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng);
+            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng, checkoutInstant);
         });
 
         if (result == null) {
@@ -504,10 +519,11 @@ public class OrderService {
                             result.order.getId(),
                             result.hasSavedLocation,
                             result.savedLat,
-                            result.savedLng
+                            result.savedLng,
+                            result.checkoutInstant
                     );
                 } else {
-                    outboundClient.sendOrderConfirmedConcise(recipientId);
+                    outboundClient.sendOrderConfirmedConcise(recipientId, result.checkoutInstant);
                 }
             }
         } catch (Exception e) {
