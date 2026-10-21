@@ -21,10 +21,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -123,7 +127,7 @@ class OrderServiceTest {
         // Verify warehouse alert sent
         verify(warehouseAlertService, times(1)).sendNewOrderAlert(order);
         // Verify combined location prompt sent without saved coordinates
-        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(customer.getRecipientId(), 100L, false, null, null);
+        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(eq(customer.getRecipientId()), eq(100L), eq(false), isNull(), isNull(), any(Instant.class));
     }
 
     @Test
@@ -137,8 +141,8 @@ class OrderServiceTest {
         orderService.finalizeOrderCheckout(100L);
 
         assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
-        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(customer.getRecipientId(), 100L, true, 10.010, 76.210);
-        verify(outboundClient, never()).sendOrderConfirmedConcise(any());
+        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(eq(customer.getRecipientId()), eq(100L), eq(true), eq(10.010), eq(76.210), any(Instant.class));
+        verify(outboundClient, never()).sendOrderConfirmedConcise(any(), any());
     }
 
     @Test
@@ -152,8 +156,51 @@ class OrderServiceTest {
         orderService.finalizeOrderCheckout(100L);
 
         assertEquals(OrderStatus.PENDING_WAREHOUSE, order.getStatus());
-        verify(outboundClient, times(1)).sendOrderConfirmedConcise(customer.getRecipientId());
-        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any());
+        verify(outboundClient, times(1)).sendOrderConfirmedConcise(eq(customer.getRecipientId()), any(Instant.class));
+        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any(), any());
+    }
+
+    @Test
+    void testFinalizeOrderCheckout_UsesCapturedCheckoutTimeEvenIfWarehouseAlertAdvancesClockAcrossCutoff() {
+        // Order confirmed at 6:29:59 PM IST (12:59:59 UTC)
+        Instant checkoutTime = Instant.parse("2026-10-21T12:59:59Z");
+        Instant delayedTime = Instant.parse("2026-10-21T13:00:05Z"); // 6:30:05 PM IST (after cutoff)
+
+        java.util.concurrent.atomic.AtomicReference<Instant> currentInstant = new java.util.concurrent.atomic.AtomicReference<>(checkoutTime);
+        Clock controllableClock = new Clock() {
+            @Override
+            public ZoneId getZone() {
+                return WhatsAppConstants.ASIA_KOLKATA_ZONE;
+            }
+            @Override
+            public Clock withZone(ZoneId zone) {
+                return this;
+            }
+            @Override
+            public Instant instant() {
+                return currentInstant.get();
+            }
+        };
+        orderService.setClock(controllableClock);
+
+        // When sendNewOrderAlert is called, simulate warehouse alert network latency advancing clock past 18:30:00
+        doAnswer(invocation -> {
+            currentInstant.set(delayedTime);
+            return null;
+        }).when(warehouseAlertService).sendNewOrderAlert(any());
+
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+        when(inventoryRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(inventory));
+        when(inventoryRepo.findById(1L)).thenReturn(Optional.of(inventory));
+
+        orderService.finalizeOrderCheckout(100L);
+
+        // Verify that outboundClient was called with the captured checkoutTime (12:59:59Z / 18:29:59 IST), NOT delayedTime
+        ArgumentCaptor<Instant> instantCaptor = ArgumentCaptor.forClass(Instant.class);
+        verify(outboundClient, times(1)).sendCombinedOrderConfirmationPrompt(
+                eq(customer.getRecipientId()), eq(100L), eq(false), isNull(), isNull(), instantCaptor.capture()
+        );
+        assertEquals(checkoutTime, instantCaptor.getValue());
     }
 
     @Test
@@ -168,8 +215,8 @@ class OrderServiceTest {
         verify(inventoryRepo, never()).save(any());
         // Does NOT send duplicate alerts
         verify(warehouseAlertService, never()).sendNewOrderAlert(any());
-        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any());
-        verify(outboundClient, never()).sendOrderConfirmedConcise(any());
+        verify(outboundClient, never()).sendCombinedOrderConfirmationPrompt(any(), any(), anyBoolean(), any(), any(), any());
+        verify(outboundClient, never()).sendOrderConfirmedConcise(any(), any());
     }
 
     @Test

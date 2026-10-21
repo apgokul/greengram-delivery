@@ -8,13 +8,13 @@ import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.Customer;
 import com.localcommerce.delivery.model.CustomerOrder;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
 import com.localcommerce.delivery.repository.DeliveryRunRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
-import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
@@ -23,12 +23,14 @@ import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
-import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
 
 @Service
 @Transactional
@@ -44,6 +46,14 @@ public class OrderService {
     private final CustomerIdentityService customerIdentityService;
     private final DeliveryRunRepository deliveryRepo;
     private final TransactionTemplate transactionTemplate;
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
 
     @Value("${store.latitude}")
     private Double storeLat;
@@ -202,7 +212,7 @@ public class OrderService {
         );
 
         if (candidateOrders.isEmpty()) {
-            outboundClient.sendTextUpdate(recipientId, "📍 Your location has been saved for your future orders.");
+            outboundClient.sendTextUpdate(recipientId, "📍 Your location has been updated & saved for your future orders.");
         } else if (candidateOrders.size() == 1) {
             CustomerOrder singleOrder = candidateOrders.get(0);
             transactionTemplate.execute(status -> {
@@ -376,19 +386,22 @@ public class OrderService {
         public final boolean hasSavedLocation;
         public final Double savedLat;
         public final Double savedLng;
+        public final Instant checkoutInstant;
 
         public CheckoutResult(CustomerOrder order,
                               List<com.localcommerce.delivery.model.Inventory> lowStockInventories,
                               boolean locationPromptNeeded,
                               boolean hasSavedLocation,
                               Double savedLat,
-                              Double savedLng) {
+                              Double savedLng,
+                              Instant checkoutInstant) {
             this.order = order;
             this.lowStockInventories = lowStockInventories;
             this.locationPromptNeeded = locationPromptNeeded;
             this.hasSavedLocation = hasSavedLocation;
             this.savedLat = savedLat;
             this.savedLng = savedLng;
+            this.checkoutInstant = checkoutInstant;
         }
     }
 
@@ -405,6 +418,8 @@ public class OrderService {
                         orderId, order.getStatus());
                 return null;
             }
+
+            Instant checkoutInstant = clock.instant();
 
             java.util.List<com.localcommerce.delivery.model.Inventory> lowStockInventories = new java.util.ArrayList<>();
 
@@ -480,7 +495,7 @@ public class OrderService {
                 customer.getRecipientId();
             }
 
-            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng);
+            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng, checkoutInstant);
         });
 
         if (result == null) {
@@ -504,10 +519,11 @@ public class OrderService {
                             result.order.getId(),
                             result.hasSavedLocation,
                             result.savedLat,
-                            result.savedLng
+                            result.savedLng,
+                            result.checkoutInstant
                     );
                 } else {
-                    outboundClient.sendOrderConfirmedConcise(recipientId);
+                    outboundClient.sendOrderConfirmedConcise(recipientId, result.checkoutInstant);
                 }
             }
         } catch (Exception e) {
