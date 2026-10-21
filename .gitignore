@@ -36,3 +36,7 @@ build/
 .env
 *.env
 application-local.properties
+
+### Scratch and Inspection Utilities ###
+DbInspector.java
+*.jsh

@@ -15,9 +15,13 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -42,7 +46,7 @@ class AdminMessageControllerTest {
     }
 
     @Test
-    void testGetActiveChats_ReturnsChatList() throws Exception {
+    void testGetActiveChats_MultipleChats_SomeAwaitingLocationSomeNot() throws Exception {
         LocalDateTime time1 = LocalDateTime.of(2026, 10, 17, 14, 0, 0);
         LocalDateTime time2 = LocalDateTime.of(2026, 10, 17, 13, 0, 0);
 
@@ -63,8 +67,10 @@ class AdminMessageControllerTest {
                 .build();
 
         when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of(log1, log2));
-        when(orderRepo.findByCustomerWhatsappNumberAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(List.of());
+        // log1 is awaiting location, log2 is not
+        when(orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210", "919123456789")), any()
+        )).thenReturn(Set.of("919876543210"));
 
         mockMvc.perform(get("/api/admin/messages/chats")
                         .contentType(MediaType.APPLICATION_JSON))
@@ -74,18 +80,95 @@ class AdminMessageControllerTest {
                 .andExpect(jsonPath("$[0].lastMessage").value("Welcome to GreenGram!"))
                 .andExpect(jsonPath("$[0].lastMessageDirection").value("OUTBOUND"))
                 .andExpect(jsonPath("$[0].lastMessageTimestamp").value("2026-10-17T14:00:00"))
+                .andExpect(jsonPath("$[0].awaitingLocation").value(true))
                 .andExpect(jsonPath("$[1].phoneNumber").value("919123456789"))
                 .andExpect(jsonPath("$[1].lastMessage").value("Hi"))
-                .andExpect(jsonPath("$[1].lastMessageDirection").value("INBOUND"));
+                .andExpect(jsonPath("$[1].lastMessageDirection").value("INBOUND"))
+                .andExpect(jsonPath("$[1].awaitingLocation").value(false));
+
+        // Verify bulk lookup was invoked exactly once for all distinct chats
+        verify(orderRepo, times(1)).findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210", "919123456789")), any()
+        );
     }
 
     @Test
-    void testGetActiveChats_EmptyList() throws Exception {
+    void testGetActiveChats_NoCustomersAwaitingLocation() throws Exception {
+        LocalDateTime time1 = LocalDateTime.of(2026, 10, 17, 14, 0, 0);
+
+        WhatsAppMessageLog log1 = WhatsAppMessageLog.builder()
+                .id(10L)
+                .phoneNumber("919876543210")
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Where is my order?")
+                .timestamp(time1)
+                .build();
+
+        when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of(log1));
+        when(orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210")), any()
+        )).thenReturn(Set.of());
+
+        mockMvc.perform(get("/api/admin/messages/chats")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].phoneNumber").value("919876543210"))
+                .andExpect(jsonPath("$[0].awaitingLocation").value(false));
+
+        verify(orderRepo, times(1)).findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210")), any()
+        );
+    }
+
+    @Test
+    void testGetActiveChats_DuplicatePhoneNumbersInMessageLogs_QueriesUniquePhonesOnce() throws Exception {
+        LocalDateTime time1 = LocalDateTime.of(2026, 10, 17, 14, 0, 0);
+        LocalDateTime time2 = LocalDateTime.of(2026, 10, 17, 13, 30, 0);
+
+        WhatsAppMessageLog log1 = WhatsAppMessageLog.builder()
+                .id(10L)
+                .phoneNumber("919876543210")
+                .direction(MessageDirection.OUTBOUND)
+                .messageBody("Update")
+                .timestamp(time1)
+                .build();
+
+        WhatsAppMessageLog log2 = WhatsAppMessageLog.builder()
+                .id(9L)
+                .phoneNumber("919876543210") // duplicate phone
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Question")
+                .timestamp(time2)
+                .build();
+
+        when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of(log1, log2));
+        when(orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210")), any() // Only queried once for unique phone
+        )).thenReturn(Set.of("919876543210"));
+
+        mockMvc.perform(get("/api/admin/messages/chats")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].awaitingLocation").value(true))
+                .andExpect(jsonPath("$[1].awaitingLocation").value(true));
+
+        verify(orderRepo, times(1)).findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
+                eq(List.of("919876543210")), any()
+        );
+    }
+
+    @Test
+    void testGetActiveChats_EmptyList_SkipsOrderQuery() throws Exception {
         when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of());
 
         mockMvc.perform(get("/api/admin/messages/chats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
+
+        // When message logs are empty, orderRepo must NOT be queried at all
+        verifyNoInteractions(orderRepo);
     }
 
     @Test

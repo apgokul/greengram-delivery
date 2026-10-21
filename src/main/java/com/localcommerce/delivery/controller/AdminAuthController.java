@@ -29,7 +29,11 @@ public class AdminAuthController {
     private String adminPasswordHash;
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody(required = false) LoginRequest request) {
+        if (request == null || request.getUsername() == null || request.getPassword() == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Invalid credentials"));
+        }
+
         if (adminUsername.equals(request.getUsername()) &&
                 passwordEncoder.matches(request.getPassword(), adminPasswordHash)) {
 

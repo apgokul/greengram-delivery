@@ -12,6 +12,7 @@ import org.springframework.web.context.WebApplicationContext;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -50,6 +51,12 @@ public class AdminSecurityIntegrationTest {
 
     @Autowired
     private WebApplicationContext context;
+
+    @Autowired
+    private com.localcommerce.delivery.repository.InventoryRepository inventoryRepository;
+
+    @Autowired
+    private com.localcommerce.delivery.repository.InventoryAuditLogRepository inventoryAuditLogRepository;
 
     private MockMvc mockMvc;
 
@@ -137,5 +144,40 @@ public class AdminSecurityIntegrationTest {
         mockMvc.perform(get("/api/admin/messages/chats")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    public void testAuditAttribution_UsesJwtPrincipal_AndIgnoresSpoofedHeader() throws Exception {
+        // 1. Seed an inventory record
+        com.localcommerce.delivery.model.Inventory inv = new com.localcommerce.delivery.model.Inventory();
+        inv.setBaseSku("TEST_BASE_SKU");
+        inv.setStockQuantity(new java.math.BigDecimal("20.000"));
+        inv.setUnit(com.localcommerce.delivery.model.ProductUnit.KG);
+        inv = inventoryRepository.save(inv);
+
+        // 2. Obtain valid token for testadmin
+        String response = mockMvc.perform(post("/api/admin/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testadmin\", \"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String token = response.split("\"token\":\"")[1].split("\"")[0];
+
+        // 3. Make an auditable request supplying a spoofed X-Admin-User: attacker
+        mockMvc.perform(put("/api/admin/inventories/" + inv.getId() + "/stock")
+                        .header("Authorization", "Bearer " + token)
+                        .header("X-Admin-User", "attacker")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"adjustmentQuantity\": 5.000, \"reason\": \"Restock\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        // 4. Assert audit log records the authenticated principal ('testadmin') and NOT the spoofed header ('attacker')
+        java.util.List<com.localcommerce.delivery.model.InventoryAuditLog> logs = inventoryAuditLogRepository.findAll();
+        org.junit.jupiter.api.Assertions.assertFalse(logs.isEmpty(), "Audit log must be created");
+        com.localcommerce.delivery.model.InventoryAuditLog lastLog = logs.get(logs.size() - 1);
+        org.junit.jupiter.api.Assertions.assertEquals("testadmin", lastLog.getChangedBy(),
+                "Audit log must record the authenticated JWT principal ('testadmin'), not the spoofed 'attacker'");
     }
 }

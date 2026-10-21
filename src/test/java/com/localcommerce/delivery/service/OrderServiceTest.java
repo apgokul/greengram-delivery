@@ -5,6 +5,7 @@ import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.enums.OrderStatus;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.model.ProductUnit;
@@ -468,12 +469,164 @@ class OrderServiceTest {
         customer.setLongitude(76.212);
         when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
 
-        orderService.confirmSavedLocation(100L);
+        orderService.confirmSavedLocation(100L, "+1234567890");
 
         assertEquals(10.012, order.getDeliveryLatitude(), 0.0001);
         assertEquals(76.212, order.getDeliveryLongitude(), 0.0001);
         verify(orderRepo, times(1)).save(order);
         verify(outboundClient, times(1)).sendTextUpdate(customer.getRecipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
+    }
+
+    @Test
+    void testConfirmSavedLocation_CancelledOrder_RejectedWithoutModifyingCoordinates() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        order.setStatus(OrderStatus.CANCELLED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+1234567890");
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 has been cancelled and cannot be assigned a delivery location."));
+    }
+
+    @Test
+    void testConfirmSavedLocation_DeliveredOrder_RejectedWithoutModifyingCoordinates() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        order.setStatus(OrderStatus.DELIVERED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+1234567890");
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 has already been delivered."));
+    }
+
+    @Test
+    void testConfirmSavedLocation_CompletedDeliveryRun_RejectedWithoutModifyingCoordinates() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        DeliveryRun run = new DeliveryRun();
+        run.setStatus(DeliveryRun.RunStatus.COMPLETED);
+        order.setDeliveryRun(run);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+1234567890");
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 delivery run has already been completed."));
+    }
+
+    @Test
+    void testConfirmSavedLocation_AlreadyHasLocation_PreservesExistingCoordinates() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        order.setDeliveryLatitude(10.005);
+        order.setDeliveryLongitude(76.205);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+1234567890");
+
+        assertEquals(10.005, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.205, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 already has a confirmed delivery location."));
+    }
+
+    @Test
+    void testConfirmSavedLocation_UnauthorizedSender_RejectedWithoutModifyingCoordinates() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+9999999999");
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+9999999999"), eq("Unauthorized order location update."));
+    }
+
+    @Test
+    void testNoSingleArgConfirmSavedLocationOverloadExists() {
+        assertThrows(NoSuchMethodException.class, () ->
+                OrderService.class.getMethod("confirmSavedLocation", Long.class)
+        );
+    }
+
+    @Test
+    void testAssignLocationToOrder_CancelledOrder_RejectedWithoutModifyingCoordinates() {
+        order.setStatus(OrderStatus.CANCELLED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToOrder(100L, "+1234567890", 10.010, 76.210);
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 has been cancelled and cannot be assigned a delivery location."));
+    }
+
+    @Test
+    void testAssignLocationToOrder_DeliveredOrder_RejectedWithoutModifyingCoordinates() {
+        order.setStatus(OrderStatus.DELIVERED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToOrder(100L, "+1234567890", 10.010, 76.210);
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 has already been delivered."));
+    }
+
+    @Test
+    void testAssignLocationToOrder_CompletedDeliveryRun_RejectedWithoutModifyingCoordinates() {
+        DeliveryRun run = new DeliveryRun();
+        run.setStatus(DeliveryRun.RunStatus.COMPLETED);
+        order.setDeliveryRun(run);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToOrder(100L, "+1234567890", 10.010, 76.210);
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 delivery run has already been completed."));
+    }
+
+    @Test
+    void testAssignLocationToOrder_AlreadyHasLocation_PreservesExistingCoordinates() {
+        order.setDeliveryLatitude(10.005);
+        order.setDeliveryLongitude(76.205);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToOrder(100L, "+1234567890", 10.010, 76.210);
+
+        assertEquals(10.005, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.205, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Order #ORD-100 already has a confirmed delivery location."));
+    }
+
+    @Test
+    void testAssignLocationToOrder_DispatchedOrder_AllowedWhenNoExistingLocation() {
+        order.setStatus(OrderStatus.DISPATCHED);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToOrder(100L, "+1234567890", 10.010, 76.210);
+
+        assertEquals(10.010, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.210, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, times(1)).save(order);
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
     }
 
     @Test
@@ -497,6 +650,7 @@ class OrderServiceTest {
         assertNull(order.getDeliveryLatitude());
         assertNull(order.getDeliveryLongitude());
         verify(orderRepo, never()).save(order);
+        verify(customerRepo, never()).save(any());
         verify(outboundClient, times(1)).sendTextUpdate(eq("+9999999999"), eq("Unauthorized order location update."));
     }
 
@@ -510,6 +664,7 @@ class OrderServiceTest {
         assertNull(order.getDeliveryLatitude());
         assertNull(order.getDeliveryLongitude());
         verify(orderRepo, never()).save(order);
+        verify(customerRepo, never()).save(any());
         verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("Unauthorized order location update."));
     }
 
@@ -522,7 +677,292 @@ class OrderServiceTest {
         assertNull(order.getDeliveryLatitude());
         assertNull(order.getDeliveryLongitude());
         verify(orderRepo, never()).save(order);
+        verify(customerRepo, never()).save(any());
         verify(outboundClient, never()).sendTextUpdate(any(), any());
+    }
+
+    @Test
+    void testAssignLocationToAllOrders_MixedBatch_SkipsIneligibleAndUpdatesEligible() {
+        CustomerOrder eligibleOrder = new CustomerOrder();
+        eligibleOrder.setId(101L);
+        eligibleOrder.setDisplayId("ORD-101");
+        eligibleOrder.setStatus(OrderStatus.CREATED);
+        eligibleOrder.setCustomer(customer);
+
+        CustomerOrder cancelledOrder = new CustomerOrder();
+        cancelledOrder.setId(102L);
+        cancelledOrder.setDisplayId("ORD-102");
+        cancelledOrder.setStatus(OrderStatus.CANCELLED);
+        cancelledOrder.setCustomer(customer);
+
+        CustomerOrder alreadyAssignedOrder = new CustomerOrder();
+        alreadyAssignedOrder.setId(103L);
+        alreadyAssignedOrder.setDisplayId("ORD-103");
+        alreadyAssignedOrder.setStatus(OrderStatus.READY);
+        alreadyAssignedOrder.setCustomer(customer);
+        alreadyAssignedOrder.setDeliveryLatitude(10.005);
+        alreadyAssignedOrder.setDeliveryLongitude(76.205);
+
+        when(orderRepo.findByIdForUpdate(101L)).thenReturn(Optional.of(eligibleOrder));
+        when(orderRepo.findByIdForUpdate(102L)).thenReturn(Optional.of(cancelledOrder));
+        when(orderRepo.findByIdForUpdate(103L)).thenReturn(Optional.of(alreadyAssignedOrder));
+        when(customerRepo.findByWhatsappNumber("+1234567890")).thenReturn(Optional.of(customer));
+
+        orderService.assignLocationToAllOrders(List.of(103L, 101L, 102L), "+1234567890", 10.010, 76.210);
+
+        // Eligible order is updated
+        assertEquals(10.010, eligibleOrder.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.210, eligibleOrder.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, times(1)).save(eligibleOrder);
+
+        // Cancelled order is untouched
+        assertNull(cancelledOrder.getDeliveryLatitude());
+        verify(orderRepo, never()).save(cancelledOrder);
+
+        // Already assigned order retains original coordinates
+        assertEquals(10.005, alreadyAssignedOrder.getDeliveryLatitude(), 0.0001);
+        verify(orderRepo, never()).save(alreadyAssignedOrder);
+
+        // Customer profile updated
+        assertEquals(10.010, customer.getLatitude(), 0.0001);
+        verify(customerRepo, times(1)).save(customer);
+
+        // Success message sent because updatedCount > 0
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
+    }
+
+    @Test
+    void testAssignLocationToAllOrders_ZeroEligible_SendsTruthfulNonSuccessMessage() {
+        CustomerOrder cancelledOrder = new CustomerOrder();
+        cancelledOrder.setId(101L);
+        cancelledOrder.setDisplayId("ORD-101");
+        cancelledOrder.setStatus(OrderStatus.CANCELLED);
+        cancelledOrder.setCustomer(customer);
+
+        CustomerOrder deliveredOrder = new CustomerOrder();
+        deliveredOrder.setId(102L);
+        deliveredOrder.setDisplayId("ORD-102");
+        deliveredOrder.setStatus(OrderStatus.DELIVERED);
+        deliveredOrder.setCustomer(customer);
+
+        when(orderRepo.findByIdForUpdate(101L)).thenReturn(Optional.of(cancelledOrder));
+        when(orderRepo.findByIdForUpdate(102L)).thenReturn(Optional.of(deliveredOrder));
+
+        orderService.assignLocationToAllOrders(List.of(101L, 102L), "+1234567890", 10.010, 76.210);
+
+        assertNull(cancelledOrder.getDeliveryLatitude());
+        assertNull(deliveredOrder.getDeliveryLatitude());
+        verify(orderRepo, never()).save(any());
+        verify(customerRepo, never()).save(any());
+
+        // Verifies accurate feedback when no orders were updated
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("None of the selected orders are awaiting a delivery location."));
+        verify(outboundClient, never()).sendTextUpdate(eq("+1234567890"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
+    }
+
+    @Test
+    void testAssignLocationToAllOrders_MissingOrderIds_DoesNotUpdateProfileAndSendsTruthfulMessage() {
+        when(orderRepo.findByIdForUpdate(999L)).thenReturn(Optional.empty());
+
+        orderService.assignLocationToAllOrders(List.of(999L), "+1234567890", 10.010, 76.210);
+
+        verify(orderRepo, never()).save(any());
+        verify(customerRepo, never()).save(any());
+
+        // Verifies truthful message for missing orders
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+1234567890"), eq("No selected orders were found awaiting a location update."));
+        verify(outboundClient, never()).sendTextUpdate(eq("+1234567890"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
+    }
+
+    @Test
+    void testAssignLocationToAllOrders_Unauthorized_DoesNotUpdateCustomerProfile() {
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.assignLocationToAllOrders(List.of(100L), "+9999999999", 10.010, 76.210);
+
+        assertNull(order.getDeliveryLatitude());
+        verify(orderRepo, never()).save(any());
+        verify(customerRepo, never()).save(any());
+        verify(outboundClient, times(1)).sendTextUpdate(eq("+9999999999"), eq("Unauthorized order location update."));
+        verify(outboundClient, never()).sendTextUpdate(eq("+9999999999"), eq(WhatsAppConstants.LOCATION_CONFIRMED_NATURAL));
+    }
+
+    @Test
+    void testConfirmSavedLocation_WithoutCoordinates_SendsPrompt() {
+        customer.setLatitude(null);
+        customer.setLongitude(null);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.confirmSavedLocation(100L, "+1234567890");
+
+        assertNull(order.getDeliveryLatitude());
+        assertNull(order.getDeliveryLongitude());
+        verify(orderRepo, never()).save(order);
+        verify(outboundClient, times(1)).sendDeliveryLocationPrompt(customer.getRecipientId());
+        verify(outboundClient, never()).sendTextUpdate(any(), any());
+    }
+
+    @Test
+    void testConfirmSavedLocation_OutboundFailure_DoesNotThrow() {
+        customer.setLatitude(10.012);
+        customer.setLongitude(76.212);
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+        doThrow(new RuntimeException("WhatsApp API timeout"))
+                .when(outboundClient).sendTextUpdate(any(), any());
+
+        assertDoesNotThrow(() -> orderService.confirmSavedLocation(100L, "+1234567890"));
+
+        assertEquals(10.012, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.212, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, times(1)).save(order);
+    }
+
+    @Test
+    void testUpdateCustomerLocation_OutOfBounds_SendsOutOfBoundMessage_NoDbChanges() {
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+
+        // Pin ~150km away
+        orderService.updateCustomerLocation("bsuid_10", 11.500, 77.500);
+
+        verify(customerRepo, never()).save(any());
+        verify(orderRepo, never()).save(any());
+        verify(orderRepo, never()).findByIdForUpdate(any());
+        ArgumentCaptor<String> msgCaptor = ArgumentCaptor.forClass(String.class);
+        verify(outboundClient, times(1)).sendTextUpdate(eq(customer.getRecipientId()), msgCaptor.capture());
+        assertTrue(msgCaptor.getValue().contains("Out of Delivery Zone"));
+        assertTrue(msgCaptor.getValue().contains("we only deliver within 20.0 km"));
+    }
+
+    @Test
+    void testUpdateCustomerLocation_ZeroCandidateOrders_UpdatesCustomerProfile_SendsSavedMessage() {
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+        when(orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(eq(10L), anyList()))
+                .thenReturn(List.of());
+
+        orderService.updateCustomerLocation("bsuid_10", 10.010, 76.210);
+
+        assertEquals(10.010, customer.getLatitude(), 0.0001);
+        assertEquals(76.210, customer.getLongitude(), 0.0001);
+        verify(customerRepo, times(1)).save(customer);
+        verify(orderRepo, never()).save(any());
+        verify(outboundClient, times(1)).sendTextUpdate(
+                customer.getRecipientId(),
+                "📍 Your location has been updated & saved for your future orders."
+        );
+    }
+
+    @Test
+    void testUpdateCustomerLocation_SingleCandidateOrder_UpdatesOrderAndCustomer_SendsConfirmedMessage() {
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+        when(orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(eq(10L), anyList()))
+                .thenReturn(List.of(order));
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.updateCustomerLocation("bsuid_10", 10.010, 76.210);
+
+        assertEquals(10.010, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.210, order.getDeliveryLongitude(), 0.0001);
+        assertEquals(10.010, customer.getLatitude(), 0.0001);
+        assertEquals(76.210, customer.getLongitude(), 0.0001);
+
+        // Verify lock order: findByIdForUpdate called before customerRepo.save
+        org.mockito.InOrder inOrder = inOrder(orderRepo, customerRepo);
+        inOrder.verify(orderRepo).findByIdForUpdate(100L);
+        inOrder.verify(orderRepo).save(order);
+        inOrder.verify(customerRepo).save(customer);
+
+        verify(outboundClient, times(1)).sendTextUpdate(
+                customer.getRecipientId(),
+                WhatsAppConstants.LOCATION_CONFIRMED_NATURAL
+        );
+    }
+
+    @Test
+    void testUpdateCustomerLocation_SingleCandidateOrder_StaleCandidateAlreadyHasCoordinates_DoesNotOverwrite() {
+        // Initial candidate query returned order, but under lock, order already has coordinates!
+        order.setDeliveryLatitude(10.050);
+        order.setDeliveryLongitude(76.250);
+
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+        when(orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(eq(10L), anyList()))
+                .thenReturn(List.of(order));
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+
+        orderService.updateCustomerLocation("bsuid_10", 10.010, 76.210);
+
+        // Order coordinates MUST NOT be overwritten
+        assertEquals(10.050, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.250, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, never()).save(order);
+
+        // Customer profile updated with new pin
+        assertEquals(10.010, customer.getLatitude(), 0.0001);
+        assertEquals(76.210, customer.getLongitude(), 0.0001);
+        verify(customerRepo, times(1)).save(customer);
+
+        verify(outboundClient, times(1)).sendTextUpdate(
+                customer.getRecipientId(),
+                "📍 Your location has been updated & saved for your future orders."
+        );
+    }
+
+    @Test
+    void testUpdateCustomerLocation_MultipleCandidateOrders_UpdatesCustomerProfile_SendsDisambiguationPrompt() {
+        CustomerOrder order2 = new CustomerOrder();
+        order2.setId(200L);
+        order2.setDisplayId("ORD-200");
+        order2.setTotalAmount(new BigDecimal("350.00"));
+        order2.setStatus(OrderStatus.CREATED);
+        order2.setCustomer(customer);
+
+        order.setTotalAmount(new BigDecimal("150.00"));
+
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+        when(orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(eq(10L), anyList()))
+                .thenReturn(List.of(order, order2));
+
+        orderService.updateCustomerLocation("bsuid_10", 10.010, 76.210);
+
+        // Customer profile updated
+        assertEquals(10.010, customer.getLatitude(), 0.0001);
+        assertEquals(76.210, customer.getLongitude(), 0.0001);
+        verify(customerRepo, times(1)).save(customer);
+        verify(orderRepo, never()).save(any());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<CustomerOrder>> listCaptor = ArgumentCaptor.forClass(List.class);
+        verify(outboundClient, times(1)).sendLocationDisambiguationPrompt(
+                eq(customer.getRecipientId()),
+                listCaptor.capture(),
+                eq(10.010),
+                eq(76.210)
+        );
+
+        List<CustomerOrder> capturedOrders = listCaptor.getValue();
+        assertEquals(2, capturedOrders.size());
+        assertEquals(100L, capturedOrders.get(0).getId());
+        assertEquals("ORD-100", capturedOrders.get(0).getDisplayId());
+        assertEquals(new BigDecimal("150.00"), capturedOrders.get(0).getTotalAmount());
+        assertEquals(200L, capturedOrders.get(1).getId());
+        assertEquals("ORD-200", capturedOrders.get(1).getDisplayId());
+        assertEquals(new BigDecimal("350.00"), capturedOrders.get(1).getTotalAmount());
+    }
+
+    @Test
+    void testUpdateCustomerLocation_OutboundFailure_DoesNotThrowAndLocationSaved() {
+        when(customerRepo.findByBsuid("bsuid_10")).thenReturn(Optional.of(customer));
+        when(orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(eq(10L), anyList()))
+                .thenReturn(List.of(order));
+        when(orderRepo.findByIdForUpdate(100L)).thenReturn(Optional.of(order));
+        doThrow(new RuntimeException("WhatsApp timeout"))
+                .when(outboundClient).sendTextUpdate(any(), any());
+
+        assertDoesNotThrow(() -> orderService.updateCustomerLocation("bsuid_10", 10.010, 76.210));
+
+        assertEquals(10.010, order.getDeliveryLatitude(), 0.0001);
+        assertEquals(76.210, order.getDeliveryLongitude(), 0.0001);
+        verify(orderRepo, times(1)).save(order);
+        verify(customerRepo, times(1)).save(customer);
     }
 
     @Test
