@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import ProductsPage from './pages/ProductsPage';
+import OrdersPage from './pages/OrdersPage';
 import ChatMonitor from './pages/ChatMonitor';
 import { LoginPage } from './components/auth/LoginPage';
 import './index.css';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'products' | 'chats'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'orders' | 'chats'>('products');
 
   useEffect(() => {
     const token = sessionStorage.getItem('adminToken');
@@ -37,6 +38,12 @@ function App() {
               📦 Products
             </button>
             <button
+              className={`nav-tab-btn ${activeTab === 'orders' ? 'active' : ''}`}
+              onClick={() => setActiveTab('orders')}
+            >
+              🛍️ Orders
+            </button>
+            <button
               className={`nav-tab-btn ${activeTab === 'chats' ? 'active' : ''}`}
               onClick={() => setActiveTab('chats')}
             >
@@ -52,7 +59,9 @@ function App() {
         </div>
       </header>
       <main className="main-content">
-        {activeTab === 'products' ? <ProductsPage /> : <ChatMonitor />}
+        {activeTab === 'products' && <ProductsPage />}
+        {activeTab === 'orders' && <OrdersPage />}
+        {activeTab === 'chats' && <ChatMonitor />}
       </main>
     </div>
   );
