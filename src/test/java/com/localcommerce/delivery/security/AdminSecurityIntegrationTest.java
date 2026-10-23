@@ -147,6 +147,39 @@ public class AdminSecurityIntegrationTest {
     }
 
     @Test
+    public void testAdminOrdersEndpointsProtectedByJwt() throws Exception {
+        // 1. Missing token -> forbidden (403)
+        mockMvc.perform(get("/api/admin/orders"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/orders/summary"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/orders/1042"))
+                .andExpect(status().isForbidden());
+
+        // 2. Obtain valid token
+        String response = mockMvc.perform(post("/api/admin/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"username\":\"testadmin\", \"password\":\"testpass\"}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String token = response.split("\"token\":\"")[1].split("\"")[0];
+
+        // 3. Valid token -> OK (or 404 for nonexistent order detail)
+        mockMvc.perform(get("/api/admin/orders")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/admin/orders/summary")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/admin/orders/999999")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     public void testAuditAttribution_UsesJwtPrincipal_AndIgnoresSpoofedHeader() throws Exception {
         // 1. Seed an inventory record
         com.localcommerce.delivery.model.Inventory inv = new com.localcommerce.delivery.model.Inventory();
