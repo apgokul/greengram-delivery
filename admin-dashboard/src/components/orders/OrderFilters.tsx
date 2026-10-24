@@ -132,31 +132,33 @@ export const OrderFilters: React.FC<OrderFiltersProps> = ({
           )}
         </div>
 
-        <div className="sort-selector-container">
-          <label className="filter-label" htmlFor="order-sort-select">Sort By:</label>
-          <select
-            id="order-sort-select"
-            className="input-field select-field"
-            aria-label="Sort orders"
-            value={filters.sort || 'createdAt,desc'}
-            onChange={e => onChange({ ...filters, page: 0, sort: e.target.value as SortOption })}
-          >
-            <option value="createdAt,desc">Newest First</option>
-            <option value="createdAt,asc">Oldest First</option>
-            <option value="totalAmount,desc">Total: High to Low</option>
-            <option value="totalAmount,asc">Total: Low to High</option>
-          </select>
-        </div>
+        <div className="sort-and-reset-group">
+          <div className="sort-selector-container">
+            <label className="filter-label" htmlFor="order-sort-select">Sort By:</label>
+            <select
+              id="order-sort-select"
+              className="input-field select-field"
+              aria-label="Sort orders"
+              value={filters.sort || 'createdAt,desc'}
+              onChange={e => onChange({ ...filters, page: 0, sort: e.target.value as SortOption })}
+            >
+              <option value="createdAt,desc">Newest First</option>
+              <option value="createdAt,asc">Oldest First</option>
+              <option value="totalAmount,desc">Total: High to Low</option>
+              <option value="totalAmount,asc">Total: Low to High</option>
+            </select>
+          </div>
 
-        {hasActiveFilters && (
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm reset-filters-btn"
-            onClick={onReset}
-          >
-            Reset Filters
-          </button>
-        )}
+          {hasActiveFilters && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm reset-filters-btn"
+              onClick={onReset}
+            >
+              Reset Filters
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Middle Row: Status Pills */}
@@ -258,7 +260,7 @@ export const OrderFilters: React.FC<OrderFiltersProps> = ({
       {datePreset === 'CUSTOM' && (
         <div className="custom-date-row">
           <div className="custom-date-inputs">
-            <div>
+            <div className="custom-date-field">
               <label className="input-label" htmlFor="custom-start-date">Start Date:</label>
               <input
                 id="custom-start-date"
@@ -269,7 +271,7 @@ export const OrderFilters: React.FC<OrderFiltersProps> = ({
                 onChange={e => setCustomStart(e.target.value)}
               />
             </div>
-            <div>
+            <div className="custom-date-field">
               <label className="input-label" htmlFor="custom-end-date">End Date:</label>
               <input
                 id="custom-end-date"
@@ -282,8 +284,7 @@ export const OrderFilters: React.FC<OrderFiltersProps> = ({
             </div>
             <button
               type="button"
-              className="btn btn-primary btn-sm"
-              style={{ alignSelf: 'flex-end', height: '38px' }}
+              className="btn btn-primary btn-sm apply-dates-btn"
               onClick={handleApplyCustomDates}
             >
               Apply Dates

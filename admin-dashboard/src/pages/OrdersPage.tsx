@@ -121,23 +121,25 @@ export default function OrdersPage() {
   return (
     <div className="orders-page-container">
       {/* Page Header */}
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+      <div className="orders-header">
         <div>
           <h1 style={{ marginBottom: '0.25rem' }}>Orders Dashboard</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             Storewide operations, delivery fulfillment, and order details
           </p>
         </div>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => {
-            fetchSummaryCounts();
-            fetchOrders(filters);
-          }}
-          title="Refresh summary counts and orders list"
-        >
-          🔄 Refresh
-        </button>
+        <div className="orders-header-actions">
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => {
+              fetchSummaryCounts();
+              fetchOrders(filters);
+            }}
+            title="Refresh summary counts and orders list"
+          >
+            🔄 Refresh
+          </button>
+        </div>
       </div>
 
       {/* 1. Global KPI Summary Cards */}

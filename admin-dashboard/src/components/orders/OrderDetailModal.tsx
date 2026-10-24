@@ -66,7 +66,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ orderId, onC
       <div className="modal-content order-modal-content" onClick={e => e.stopPropagation()}>
         {/* Modal Header */}
         <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="order-modal-header-title">
             <h2>{detail ? detail.displayId : `Order #${orderId}`}</h2>
             {detail && (
               <span className={`status-badge status-${detail.status.toLowerCase().replace('_', '-')}`}>
@@ -83,7 +83,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ orderId, onC
         <div className="modal-body" style={{ maxHeight: 'calc(85vh - 120px)', overflowY: 'auto' }}>
           {loading && (
             <div style={{ padding: '3rem', textAlign: 'center' }}>
-              <div className="spinner" style={{ margin: '0 auto', borderColor: 'rgba(59, 130, 246, 0.3)', borderTopColor: '#3b82f6' }} />
+              <div className="spinner" style={{ margin: '0 auto' }} />
               <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Loading complete order details...</p>
             </div>
           )}
@@ -160,7 +160,7 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ orderId, onC
                         : '⚠️ Coordinates Missing'}
                     </span>
                   </div>
-                  <div className="detail-card-row">
+                  <div className="detail-card-row detail-card-row-map">
                     <span className="detail-label">Google Maps:</span>
                     <span className="detail-val">
                       {detail.delivery.hasLocation && detail.delivery.googleMapsUrl ? (
@@ -217,13 +217,13 @@ export const OrderDetailModal: React.FC<OrderDetailModalProps> = ({ orderId, onC
                               <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>SKU: {item.productSku}</span>
                             </div>
                           </td>
-                          <td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
                             {item.packageQuantity != null ? `${item.packageQuantity} ${item.packageUnit || ''}` : '—'}
                           </td>
-                          <td style={{ textAlign: 'center', fontWeight: 600 }}>{item.quantity}</td>
-                          <td style={{ textAlign: 'right' }}>{formatCurrency(item.lockedPrice)}</td>
-                          <td style={{ textAlign: 'right', fontWeight: 600 }}>{formatCurrency(item.lineTotal)}</td>
-                          <td>
+                          <td style={{ textAlign: 'center', fontWeight: 600, whiteSpace: 'nowrap' }}>{item.quantity}</td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>{formatCurrency(item.lockedPrice)}</td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{formatCurrency(item.lineTotal)}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
                             {item.deductedQuantity != null ? (
                               <span style={{ fontSize: '0.85rem' }}>
                                 {item.deductedQuantity} {item.deductedUnit || ''}

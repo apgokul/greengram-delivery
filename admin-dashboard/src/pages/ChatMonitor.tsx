@@ -8,12 +8,14 @@ export default function ChatMonitor() {
     const [chatsError, setChatsError] = useState<string | null>(null);
 
     const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
+    const [showMobileChat, setShowMobileChat] = useState<boolean>(false);
     const [messages, setMessages] = useState<WhatsAppMessageLog[]>([]);
     const [loadingMessages, setLoadingMessages] = useState<boolean>(false);
     const [messagesError, setMessagesError] = useState<string | null>(null);
 
     const [searchQuery, setSearchQuery] = useState<string>('');
 
+    const chatHistoryRef = useRef<HTMLDivElement>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const displayIdentifier = (id: string): string => {
@@ -99,15 +101,18 @@ export default function ChatMonitor() {
     }, []);
 
     useEffect(() => {
-        // Auto-scroll to bottom of chat history when messages update
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+        // Auto-scroll to bottom of chat history when messages or view updates
+        if (chatHistoryRef.current) {
+            chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
+        }
+    }, [messages, showMobileChat]);
 
     const handleSelectChat = (phoneNumber: string) => {
         if (selectedPhone !== phoneNumber) {
             setMessages([]);
             setSelectedPhone(phoneNumber);
         }
+        setShowMobileChat(true);
     };
 
     const filteredChats = chats.filter((chat) => {
@@ -150,17 +155,16 @@ export default function ChatMonitor() {
     };
 
     return (
-        <div className="chat-monitor-layout">
+        <div className={`chat-monitor-layout ${showMobileChat ? 'mobile-show-chat' : 'mobile-show-list'}`}>
             {/* LEFT SIDEBAR: Active Chats List */}
             <aside className="chat-sidebar">
                 <div className="chat-sidebar-header">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h2>Chats ({chats.length})</h2>
                         <button
-                            className="btn btn-secondary"
+                            className="btn btn-secondary btn-sm chat-refresh-btn"
                             onClick={fetchChats}
                             disabled={loadingChats}
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem' }}
                             title="Refresh chat sessions"
                         >
                             {loadingChats ? 'Refreshing...' : 'Refresh'}
@@ -205,8 +209,17 @@ export default function ChatMonitor() {
                         return (
                             <div
                                 key={chat.phoneNumber}
+                                role="button"
+                                tabIndex={0}
+                                aria-pressed={isSelected}
                                 className={`chat-item ${isSelected ? 'active' : ''}`}
                                 onClick={() => handleSelectChat(chat.phoneNumber)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        handleSelectChat(chat.phoneNumber);
+                                    }
+                                }}
                             >
                                 <div className="chat-item-header">
                                     <span className="chat-item-phone">{displayIdentifier(chat.phoneNumber)}</span>
@@ -215,8 +228,9 @@ export default function ChatMonitor() {
                                 {chat.awaitingLocation && (
                                     <div style={{ marginTop: '0.25rem', marginBottom: '0.25rem' }}>
                                         <span style={{
-                                            backgroundColor: '#fef3c7',
-                                            color: '#b45309',
+                                            backgroundColor: 'var(--warning-bg)',
+                                            color: 'var(--warning-color)',
+                                            border: '1px solid var(--warning-border)',
                                             fontSize: '0.72rem',
                                             fontWeight: 600,
                                             padding: '0.15rem 0.45rem',
@@ -246,23 +260,32 @@ export default function ChatMonitor() {
                 {selectedPhone ? (
                     <>
                         <div className="chat-header">
-                            <div>
-                                <h3 style={{ margin: 0 }}>{displayIdentifier(selectedPhone)}</h3>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                    {messages.length} message{messages.length === 1 ? '' : 's'} recorded
-                                </span>
+                            <div className="chat-header-info">
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary btn-sm chat-back-btn"
+                                    onClick={() => setShowMobileChat(false)}
+                                    aria-label="Back to chat list"
+                                >
+                                    ← Chats
+                                </button>
+                                <div className="chat-header-title-group">
+                                    <h3 style={{ margin: 0 }}>{displayIdentifier(selectedPhone)}</h3>
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                        {messages.length} message{messages.length === 1 ? '' : 's'} recorded
+                                    </span>
+                                </div>
                             </div>
                             <button
-                                className="btn btn-secondary"
+                                className="btn btn-secondary btn-sm chat-refresh-btn"
                                 onClick={refreshCurrentChat}
                                 disabled={loadingMessages}
-                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.85rem' }}
                             >
                                 {loadingMessages ? 'Updating...' : 'Refresh Chat'}
                             </button>
                         </div>
 
-                        <div className="chat-history-scroll">
+                        <div className="chat-history-scroll" ref={chatHistoryRef}>
                             {loadingMessages && messages.length === 0 && (
                                 <div className="chat-status-message">
                                     <div className="spinner" style={{ margin: '2rem auto' }}></div>

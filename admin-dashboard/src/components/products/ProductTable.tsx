@@ -94,7 +94,7 @@ export const ProductTable = ({
     if (loading) {
         return (
             <div className="table-container" style={{ padding: '3rem', textAlign: 'center' }}>
-                <div className="spinner" style={{ margin: '0 auto', borderColor: 'rgba(59, 130, 246, 0.3)', borderTopColor: '#3b82f6' }}></div>
+                <div className="spinner" style={{ margin: '0 auto' }}></div>
                 <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Loading products...</p>
             </div>
         );
@@ -166,7 +166,7 @@ export const ProductTable = ({
                                                     <td rowSpan={rowSpan} style={{ fontWeight: 'bold', verticalAlign: 'middle' }}>
                                                         {parent.name}
                                                     </td>
-                                                    <td rowSpan={rowSpan} style={{ verticalAlign: 'middle' }}>
+                                                    <td rowSpan={rowSpan} style={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
                                                         <span style={{ 
                                                             fontWeight: 600,
                                                             color: (inventory?.stockQuantity ?? 0) === 0 ? 'var(--danger-color)' : 'inherit'
@@ -174,7 +174,7 @@ export const ProductTable = ({
                                                             {inventory?.stockQuantity ?? 0} {inventory?.unit ?? ''}
                                                         </span>
                                                     </td>
-                                                    <td rowSpan={rowSpan} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                                                    <td rowSpan={rowSpan} style={{ textAlign: 'center', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
                                                         {hasInventory && (
                                                             <button 
                                                                 className="btn btn-secondary btn-sm"
@@ -187,10 +187,10 @@ export const ProductTable = ({
                                                 </>
                                             )}
                                             
-                                            <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', verticalAlign: 'middle' }}>
+                                            <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
                                                 {product.sku}
                                             </td>
-                                            <td style={{ color: 'var(--text-secondary)', verticalAlign: 'middle' }}>
+                                            <td style={{ color: 'var(--text-secondary)', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
                                                 {product.packageQuantity && product.packageUnit ? (
                                                     <span>
                                                         {Number(product.packageQuantity)} {product.packageUnit === 'L' ? 'L' : product.packageUnit.toLowerCase()}
@@ -199,14 +199,14 @@ export const ProductTable = ({
                                                     <span style={{ opacity: 0.5 }}>-</span>
                                                 )}
                                             </td>
-                                            <td style={{ verticalAlign: 'middle' }}>{product.currentPrice.toFixed(2)}</td>
+                                            <td style={{ verticalAlign: 'middle', whiteSpace: 'nowrap' }}>{product.currentPrice.toFixed(2)}</td>
                                             <td style={{ verticalAlign: 'middle' }}>
                                                 <span className={`badge ${product.active ? 'badge-success' : 'badge-neutral'}`}>
                                                     {product.active ? 'Active' : 'Inactive'}
                                                 </span>
                                             </td>
-                                            <td style={{ textAlign: 'right', verticalAlign: 'middle' }}>
-                                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center' }}>
+                                            <td style={{ textAlign: 'right', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                                                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', alignItems: 'center', flexShrink: 0 }}>
                                                     <button 
                                                         className="btn btn-secondary btn-sm"
                                                         onClick={() => onEditPrice(product)}

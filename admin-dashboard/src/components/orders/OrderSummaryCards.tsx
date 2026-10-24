@@ -16,9 +16,9 @@ export const OrderSummaryCards: React.FC<OrderSummaryCardsProps> = ({
 }) => {
   if (error) {
     return (
-      <div className="alert alert-error" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span>⚠️ Failed to load store summary metrics: {error}</span>
-        <button className="btn btn-secondary btn-sm" onClick={onRetry}>
+      <div className="alert alert-error" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <span style={{ minWidth: 0, flex: '1 1 200px' }}>⚠️ Failed to load store summary metrics: {error}</span>
+        <button className="btn btn-secondary btn-sm" onClick={onRetry} style={{ whiteSpace: 'nowrap', marginLeft: 'auto' }}>
           Retry
         </button>
       </div>
@@ -69,7 +69,7 @@ export const OrderSummaryCards: React.FC<OrderSummaryCardsProps> = ({
           <span className="summary-card-title">Needs Attention</span>
           <span className="summary-card-icon">⚠️</span>
         </div>
-        <div className="summary-card-value" style={{ color: (counts?.needsAttention ?? 0) > 0 ? '#f87171' : 'inherit' }}>
+        <div className="summary-card-value" style={{ color: (counts?.needsAttention ?? 0) > 0 ? 'var(--danger-color)' : 'inherit' }}>
           {loading ? <span className="skeleton-text" /> : (counts?.needsAttention ?? 0)}
         </div>
         <span className="summary-card-sub">Missing location or stock mismatch</span>

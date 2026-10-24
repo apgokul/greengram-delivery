@@ -22,7 +22,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
   if (loading) {
     return (
       <div className="table-container" style={{ padding: '3.5rem', textAlign: 'center' }}>
-        <div className="spinner" style={{ margin: '0 auto', borderColor: 'rgba(59, 130, 246, 0.3)', borderTopColor: '#3b82f6' }} />
+        <div className="spinner" style={{ margin: '0 auto' }} />
         <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Loading orders...</p>
       </div>
     );
@@ -92,7 +92,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
           <tr>
             <th>Order ID</th>
             <th>Customer</th>
-            <th>Placed At</th>
+            <th className="order-placed-at-header">Placed At</th>
             <th>Status</th>
             <th style={{ textAlign: 'center' }}>Items</th>
             <th style={{ textAlign: 'right' }}>Total Amount</th>
@@ -105,7 +105,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
           {orders.map(order => (
             <tr key={order.id} className="order-row">
               {/* 1. Order ID */}
-              <td>
+              <td style={{ whiteSpace: 'nowrap' }}>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{order.displayId}</span>
                   <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>ID: #{order.id}</span>
@@ -116,15 +116,17 @@ export const OrderTable: React.FC<OrderTableProps> = ({
               <td>
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   <span style={{ fontWeight: 500 }}>{order.customerName}</span>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                     {formatPhone(order.customerPhone)}
                   </span>
                 </div>
               </td>
 
               {/* 3. Placed At */}
-              <td>
-                <span style={{ fontSize: '0.85rem' }}>{formatTimestamp(order.createdAt)}</span>
+              <td className="order-placed-at-cell">
+                <span className="order-timestamp" style={{ fontSize: '0.85rem' }}>
+                  {formatTimestamp(order.createdAt)}
+                </span>
               </td>
 
               {/* 4. Status */}
@@ -136,12 +138,12 @@ export const OrderTable: React.FC<OrderTableProps> = ({
               </td>
 
               {/* 6. Total Amount */}
-              <td style={{ textAlign: 'right', fontWeight: 600 }}>
+              <td style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>
                 {formatCurrency(order.totalAmount)}
               </td>
 
               {/* 7. Location Availability */}
-              <td>
+              <td style={{ whiteSpace: 'nowrap' }}>
                 {order.hasLocation ? (
                   <span className="location-badge location-present" title="GPS coordinates confirmed">
                     📍 Confirmed
@@ -185,7 +187,7 @@ export const OrderTable: React.FC<OrderTableProps> = ({
               </td>
 
               {/* 9. Action */}
-              <td style={{ textAlign: 'center' }}>
+              <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
                 <button
                   className="btn btn-primary btn-sm"
                   onClick={() => onViewDetails(order.id)}

@@ -62,12 +62,12 @@ export default function ProductsPage() {
 
     return (
         <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+            <div className="products-header">
                 <div>
                     <h1>Products</h1>
                     <p style={{ color: 'var(--text-secondary)' }}>Manage your inventory, pricing, and product status.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
+                <div className="products-header-actions">
                     <button className="btn btn-secondary" onClick={fetchProducts}>
                         Refresh
                     </button>

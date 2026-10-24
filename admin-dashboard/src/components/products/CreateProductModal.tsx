@@ -221,7 +221,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                         />
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                    <div className="product-form-grid-2col">
                         <div className="input-group">
                             <label className="input-label">Pack Size / Quantity</label>
                             <input 
@@ -254,7 +254,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                     </div>
 
                     {/* Explicit Physical Inventory Pool Selection */}
-                    <div className="input-group" style={{ marginTop: '0.5rem', marginBottom: '1.25rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.5rem', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
+                    <div className="input-group" style={{ marginTop: '0.5rem', marginBottom: '1.25rem', padding: '1rem', border: '1px solid var(--border-color)', borderRadius: '0.5rem', backgroundColor: 'var(--surface-color-subtle)' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
                             <label className="input-label" style={{ fontWeight: 600, color: 'var(--text-primary)', marginBottom: 0 }}>
                                 Physical Inventory Pool
@@ -282,13 +282,13 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                         )}
 
                         {inventoryLoadError && !inventoryLoading && (
-                            <div className="alert alert-error" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                <span>{inventoryLoadError}</span>
+                            <div className="alert alert-error" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                                <span style={{ minWidth: 0, flex: '1 1 180px' }}>{inventoryLoadError}</span>
                                 <button
                                     type="button"
                                     className="btn btn-secondary btn-sm"
                                     onClick={fetchInventories}
-                                    style={{ marginLeft: '1rem', whiteSpace: 'nowrap' }}
+                                    style={{ whiteSpace: 'nowrap', marginLeft: 'auto' }}
                                 >
                                     Retry
                                 </button>
@@ -297,7 +297,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
 
                         {!inventoryLoading && !inventoryLoadError && (
                             <>
-                                <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '0.75rem' }}>
+                                <div className="inventory-mode-radios">
                                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', fontSize: '0.875rem' }}>
                                         <input
                                             type="radio"
@@ -342,7 +342,7 @@ export const CreateProductModal: React.FC<CreateProductModalProps> = ({ isOpen, 
                                         </select>
                                     </div>
                                 ) : (
-                                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '0.75rem' }}>
+                                    <div className="product-form-grid-base-sku">
                                         <div className="input-group" style={{ marginBottom: 0 }}>
                                             <label className="input-label" style={{ fontSize: '0.75rem' }}>Base Inventory SKU</label>
                                             <input
