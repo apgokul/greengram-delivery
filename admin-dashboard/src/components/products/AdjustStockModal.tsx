@@ -65,7 +65,7 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
 
                     <div className="input-group">
                         <label className="input-label">Current Stock</label>
-                        <div className="input-field" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
+                        <div className="input-field input-field-readonly">
                             {product.inventory?.stockQuantity ?? 0} {product.inventory?.unit}
                         </div>
                     </div>

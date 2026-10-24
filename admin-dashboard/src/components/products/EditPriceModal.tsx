@@ -54,7 +54,7 @@ export const EditPriceModal: React.FC<EditPriceModalProps> = ({ isOpen, onClose,
                     
                     <div className="input-group">
                         <label className="input-label">Current Price (₹)</label>
-                        <div className="input-field" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
+                        <div className="input-field input-field-readonly">
                             {product.currentPrice.toFixed(2)}
                         </div>
                     </div>
