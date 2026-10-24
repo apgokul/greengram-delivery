@@ -27,7 +27,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -418,5 +422,82 @@ class OrderAdminQueryIntegrationTest {
         assertTrue(noAttnDisplayIds.contains("ORD-ATTN-3"));
         assertTrue(noAttnDisplayIds.contains("ORD-ATTN-4"));
         assertTrue(noAttnDisplayIds.contains("ORD-ATTN-5"));
+    }
+
+    @Test
+    void testDateFiltering_IstBoundaries_CorrectlyFiltersUtcStoredOrders() {
+        Clock fixedClock = Clock.fixed(Instant.parse("2026-10-25T10:00:00Z"), WhatsAppConstants.ASIA_KOLKATA_ZONE);
+        orderAdminService.setClock(fixedClock);
+
+        try {
+            Customer customer = new Customer();
+            customer.setName("Suresh");
+            customer.setWhatsappNumber("919876543299");
+            customer = customerRepo.save(customer);
+
+            // 1. Order at 02:00 IST on 25 October 2026 -> stored as 2026-10-24T20:30:00 UTC
+            CustomerOrder o1 = new CustomerOrder();
+            o1.setDisplayId("ORD-OCT25-EARLY");
+            o1.setCustomer(customer);
+            o1.setStatus(OrderStatus.DELIVERED);
+            o1.setTotalAmount(new BigDecimal("120.00"));
+            o1.setDeliveryLatitude(10.01);
+            o1.setDeliveryLongitude(76.21);
+            o1.setStockReconciled(true);
+            o1 = orderRepo.save(o1);
+            jdbcTemplate.update("UPDATE customer_orders SET created_at = ?, delivered_at = ? WHERE id = ?",
+                    LocalDateTime.of(2026, 10, 24, 20, 30, 0),
+                    LocalDateTime.of(2026, 10, 24, 20, 45, 0),
+                    o1.getId());
+
+            // 2. Order at 23:30 IST on 25 October 2026 -> stored as 2026-10-25T18:00:00 UTC
+            CustomerOrder o2 = new CustomerOrder();
+            o2.setDisplayId("ORD-OCT25-LATE");
+            o2.setCustomer(customer);
+            o2.setStatus(OrderStatus.READY);
+            o2.setTotalAmount(new BigDecimal("250.00"));
+            o2.setDeliveryLatitude(10.02);
+            o2.setDeliveryLongitude(76.22);
+            o2.setStockReconciled(true);
+            o2 = orderRepo.save(o2);
+            jdbcTemplate.update("UPDATE customer_orders SET created_at = ? WHERE id = ?",
+                    LocalDateTime.of(2026, 10, 25, 18, 0, 0),
+                    o2.getId());
+
+            // 3. Order at 01:00 IST on 26 October 2026 -> stored as 2026-10-25T19:30:00 UTC
+            CustomerOrder o3 = new CustomerOrder();
+            o3.setDisplayId("ORD-OCT26-EARLY");
+            o3.setCustomer(customer);
+            o3.setStatus(OrderStatus.PENDING_WAREHOUSE);
+            o3.setTotalAmount(new BigDecimal("300.00"));
+            o3.setDeliveryLatitude(10.03);
+            o3.setDeliveryLongitude(76.23);
+            o3.setStockReconciled(true);
+            o3 = orderRepo.save(o3);
+            jdbcTemplate.update("UPDATE customer_orders SET created_at = ? WHERE id = ?",
+                    LocalDateTime.of(2026, 10, 25, 19, 30, 0),
+                    o3.getId());
+
+            // Query with explicit IST calendar date range: 25 October 2026
+            PageResponseDTO<OrderSummaryDTO> oct25Orders = orderAdminService.getOrders(
+                    0, 10, null, null,
+                    LocalDate.of(2026, 10, 25),
+                    LocalDate.of(2026, 10, 25),
+                    null, null, "createdAt,desc"
+            );
+
+            List<String> orderIds = oct25Orders.getContent().stream().map(OrderSummaryDTO::getDisplayId).toList();
+            assertEquals(2, orderIds.size(), "Exactly 2 orders belong to 25 October IST");
+            assertTrue(orderIds.contains("ORD-OCT25-EARLY"), "02:00 IST order must belong to 25 October");
+            assertTrue(orderIds.contains("ORD-OCT25-LATE"), "23:30 IST order must belong to 25 October");
+            assertFalse(orderIds.contains("ORD-OCT26-EARLY"), "01:00 IST order on 26 October must NOT belong to 25 October");
+
+            // Query summary KPI counts for "Today" (25 October)
+            OrderSummaryCountsDTO counts = orderAdminService.getSummaryCounts();
+            assertEquals(2, counts.getCreatedToday(), "Created Today must count 2 orders belonging to 25 October IST");
+            assertEquals(1, counts.getDeliveredToday(), "Delivered Today must count 1 order delivered on 25 October IST");
+        } finally {
+            orderAdminService.setClock(Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE));
+        }
     }
 }

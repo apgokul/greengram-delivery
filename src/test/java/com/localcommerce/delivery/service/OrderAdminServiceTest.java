@@ -34,6 +34,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -453,12 +454,14 @@ class OrderAdminServiceTest {
     void testGetSummaryCounts_CalculatesTodayBoundsInAsiaKolkata() {
         // Instant is 2026-10-22T12:00:00Z -> Asia/Kolkata is 2026-10-22 17:30:00
         LocalDate todayKolkata = LocalDate.of(2026, 10, 22);
-        LocalDateTime startOfToday = todayKolkata.atStartOfDay();
-        LocalDateTime startOfTomorrow = todayKolkata.plusDays(1).atStartOfDay();
+        LocalDateTime expectedStartUtc = todayKolkata.atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime expectedEndUtc = todayKolkata.plusDays(1).atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
 
-        when(orderRepo.countOrdersCreatedBetween(startOfToday, startOfTomorrow)).thenReturn(15L);
+        when(orderRepo.countOrdersCreatedBetween(expectedStartUtc, expectedEndUtc)).thenReturn(15L);
         when(orderRepo.countOrdersByStatusIn(OrderAdminService.IN_PROGRESS_STATUSES)).thenReturn(6L);
-        when(orderRepo.countOrdersDeliveredBetween(OrderStatus.DELIVERED, startOfToday, startOfTomorrow)).thenReturn(9L);
+        when(orderRepo.countOrdersDeliveredBetween(OrderStatus.DELIVERED, expectedStartUtc, expectedEndUtc)).thenReturn(9L);
         when(orderRepo.countOrdersNeedingAttention(OrderAdminService.ACTIVE_FULFILLMENT_STATUSES)).thenReturn(2L);
 
         OrderSummaryCountsDTO counts = service.getSummaryCounts();
@@ -467,5 +470,54 @@ class OrderAdminServiceTest {
         assertEquals(6L, counts.getInProgress());
         assertEquals(9L, counts.getDeliveredToday());
         assertEquals(2L, counts.getNeedsAttention());
+    }
+
+    @Test
+    void testRegression_DateBoundaries_25OctoberSemanticProof() {
+        // Fix clock to 2026-10-25T10:00:00Z -> In Asia/Kolkata, this is 2026-10-25 15:30:00 (3:30 PM)
+        Instant fixed25Oct = Instant.parse("2026-10-25T10:00:00Z");
+        Clock clock25Oct = Clock.fixed(fixed25Oct, WhatsAppConstants.ASIA_KOLKATA_ZONE);
+        service.setClock(clock25Oct);
+
+        ArgumentCaptor<LocalDateTime> startCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> endCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+
+        when(orderRepo.countOrdersCreatedBetween(startCaptor.capture(), endCaptor.capture())).thenReturn(2L);
+        when(orderRepo.countOrdersByStatusIn(any())).thenReturn(0L);
+        when(orderRepo.countOrdersDeliveredBetween(eq(OrderStatus.DELIVERED), any(), any())).thenReturn(1L);
+        when(orderRepo.countOrdersNeedingAttention(any())).thenReturn(0L);
+
+        OrderSummaryCountsDTO counts = service.getSummaryCounts();
+        assertNotNull(counts);
+
+        LocalDateTime queryStart = startCaptor.getValue();
+        LocalDateTime queryEnd = endCaptor.getValue();
+
+        // 25 October 00:00:00 IST in UTC is 2026-10-24 18:30:00
+        assertEquals(LocalDateTime.of(2026, 10, 24, 18, 30, 0), queryStart);
+        // 26 October 00:00:00 IST in UTC is 2026-10-25 18:30:00
+        assertEquals(LocalDateTime.of(2026, 10, 25, 18, 30, 0), queryEnd);
+
+        // 1. Order at 02:00 IST on 25 October 2026 -> stored as 2026-10-24T20:30:00 UTC
+        LocalDateTime orderEarlyMorningUtc = LocalDateTime.of(2026, 10, 24, 20, 30, 0);
+        assertTrue(!orderEarlyMorningUtc.isBefore(queryStart) && orderEarlyMorningUtc.isBefore(queryEnd),
+                "02:00 IST order (2026-10-24T20:30:00 UTC) must fall inside 25 October's query bounds");
+
+        // 2. Order at 23:30 IST on 25 October 2026 -> stored as 2026-10-25T18:00:00 UTC
+        LocalDateTime orderLateNightUtc = LocalDateTime.of(2026, 10, 25, 18, 0, 0);
+        assertTrue(!orderLateNightUtc.isBefore(queryStart) && orderLateNightUtc.isBefore(queryEnd),
+                "23:30 IST order (2026-10-25T18:00:00 UTC) must fall inside 25 October's query bounds");
+
+        // 3. Order at 01:00 IST on 26 October 2026 -> stored as 2026-10-25T19:30:00 UTC
+        LocalDateTime orderNextDayUtc = LocalDateTime.of(2026, 10, 25, 19, 30, 0);
+        assertFalse(!orderNextDayUtc.isBefore(queryStart) && orderNextDayUtc.isBefore(queryEnd),
+                "01:00 IST order on 26 October (2026-10-25T19:30:00 UTC) must NOT fall inside 25 October's query bounds");
+
+        // 4. Delivered Today uses the exact same [start, end) bounds
+        ArgumentCaptor<LocalDateTime> deliveredStartCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        ArgumentCaptor<LocalDateTime> deliveredEndCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        verify(orderRepo).countOrdersDeliveredBetween(eq(OrderStatus.DELIVERED), deliveredStartCaptor.capture(), deliveredEndCaptor.capture());
+        assertEquals(queryStart, deliveredStartCaptor.getValue());
+        assertEquals(queryEnd, deliveredEndCaptor.getValue());
     }
 }

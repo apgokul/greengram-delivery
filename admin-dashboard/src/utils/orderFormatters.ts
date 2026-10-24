@@ -72,12 +72,22 @@ export function formatCurrency(amount: number | null | undefined): string {
 
 /**
  * Formats an ISO timestamp into a readable date & time string in Asia/Kolkata.
+ * Treats timezone-less ISO strings (such as Java LocalDateTime) as UTC wall-clock values.
  */
 export function formatTimestamp(isoString: string | null | undefined): string {
   if (!isoString) return '—';
   try {
+    let s = isoString.trim();
+    if (!s) return '—';
+
+    // If string has a time component (T or space) but no timezone offset (Z or +/-HH:mm),
+    // treat it as UTC per backend storage contract
+    if (/(?:T|\s)\d{2}:\d{2}/.test(s) && !/(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(s)) {
+      s = s.replace(' ', 'T') + 'Z';
+    }
+
     // Parse ISO string
-    const d = new Date(isoString);
+    const d = new Date(s);
     if (isNaN(d.getTime())) {
       // Fallback: direct string split
       const parts = isoString.split('T');

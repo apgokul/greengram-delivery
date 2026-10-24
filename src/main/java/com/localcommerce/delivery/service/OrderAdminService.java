@@ -32,6 +32,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -124,8 +125,14 @@ public class OrderAdminService {
             }
         }
 
-        LocalDateTime fromTimestamp = (effectiveStartDate != null) ? effectiveStartDate.atStartOfDay() : null;
-        LocalDateTime toTimestamp = (effectiveEndDate != null) ? effectiveEndDate.plusDays(1).atStartOfDay() : null;
+        LocalDateTime fromTimestamp = (effectiveStartDate != null)
+                ? effectiveStartDate.atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                        .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime()
+                : null;
+        LocalDateTime toTimestamp = (effectiveEndDate != null)
+                ? effectiveEndDate.plusDays(1).atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                        .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime()
+                : null;
 
         // 2. Sorting resolution with deterministic secondary key
         Sort sort = parseSort(sortParam);
@@ -195,8 +202,10 @@ public class OrderAdminService {
      */
     public OrderSummaryCountsDTO getSummaryCounts() {
         LocalDate today = LocalDate.now(clock);
-        LocalDateTime startOfToday = today.atStartOfDay();
-        LocalDateTime startOfTomorrow = today.plusDays(1).atStartOfDay();
+        LocalDateTime startOfToday = today.atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime startOfTomorrow = today.plusDays(1).atStartOfDay(WhatsAppConstants.ASIA_KOLKATA_ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
 
         long createdToday = orderRepo.countOrdersCreatedBetween(startOfToday, startOfTomorrow);
         long inProgress = orderRepo.countOrdersByStatusIn(IN_PROGRESS_STATUSES);
