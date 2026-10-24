@@ -93,13 +93,13 @@ public class WhatsAppConstants {
 
     // Combined order confirmation and location request templates
     public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*";
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*";
 
     public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
 
     public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
-            "🎉 *Your order is confirmed!*\n\nThank you for choosing *GreenGram* \n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
 
     public static final String SAVED_LOCATION_STANDALONE_PROMPT =
             "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
@@ -108,7 +108,7 @@ public class WhatsAppConstants {
             "*Let's update your order 🛒*\n\nNo problem! Update your cart, and send us your new order.";
 
     public static final String LOCATION_CONFIRMED_NATURAL =
-            "Thanks! Your delivery location has been saved. We'll deliver your order to this location.";
+            "Your delivery location has been saved. We'll deliver your order to this location. Thank you!";
 
 
     public static final String ORDER_CANCELLED_CUSTOMER = "Your order has been cancelled.";
