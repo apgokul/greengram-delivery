@@ -19,6 +19,7 @@ import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -300,5 +301,64 @@ class AdminMessageControllerTest {
         org.junit.jupiter.api.Assertions.assertNull(AdminMessageController.normalizeCustomerIdentifier(null));
         org.junit.jupiter.api.Assertions.assertNull(AdminMessageController.normalizeCustomerIdentifier("<script>alert(1)</script>"));
         org.junit.jupiter.api.Assertions.assertNull(AdminMessageController.normalizeCustomerIdentifier("invalid$#@!phone"));
+    }
+
+    @Test
+    void testGetActiveChats_ReturnsProfileName_EvenWhenLatestMessageIsOutbound() throws Exception {
+        LocalDateTime time1 = LocalDateTime.of(2026, 10, 24, 18, 0, 0);
+        LocalDateTime time2 = LocalDateTime.of(2026, 10, 24, 17, 30, 0);
+
+        // Chat 1: Latest message is an OUTBOUND bot message
+        WhatsAppMessageLog log1 = WhatsAppMessageLog.builder()
+                .id(20L)
+                .phoneNumber("919876543210")
+                .direction(MessageDirection.OUTBOUND)
+                .messageBody("Your order has been confirmed!")
+                .timestamp(time1)
+                .profileName(null)
+                .build();
+
+        // Chat 2: Latest message is an INBOUND message from a user without a profile name
+        WhatsAppMessageLog log2 = WhatsAppMessageLog.builder()
+                .id(15L)
+                .phoneNumber("919123456789")
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Hi")
+                .timestamp(time2)
+                .profileName(null)
+                .build();
+
+        when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of(log1, log2));
+        when(orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(any(), any()))
+                .thenReturn(Set.of());
+
+        // Batch projection returns the latest known profile name for chat 1
+        when(messageLogRepository.findLatestProfileNames(List.of("919876543210", "919123456789")))
+                .thenReturn(List.of(new com.localcommerce.delivery.dto.ChatProfileNameProjection("919876543210", "Anu Joseph")));
+
+        mockMvc.perform(get("/api/admin/messages/chats")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].phoneNumber").value("919876543210"))
+                .andExpect(jsonPath("$[0].profileName").value("Anu Joseph"))
+                .andExpect(jsonPath("$[0].lastMessageDirection").value("OUTBOUND"))
+                .andExpect(jsonPath("$[1].phoneNumber").value("919123456789"))
+                .andExpect(jsonPath("$[1].profileName").value(org.hamcrest.Matchers.nullValue()));
+
+        verify(messageLogRepository, times(1)).findLatestProfileNames(List.of("919876543210", "919123456789"));
+    }
+
+    @Test
+    void testGetActiveChats_EmptyChats_SafeNoQueries() throws Exception {
+        when(messageLogRepository.findLatestMessagePerChat()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/admin/messages/chats")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+
+        verify(messageLogRepository, never()).findLatestProfileNames(any());
+        verify(orderRepo, never()).findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(any(), any());
     }
 }

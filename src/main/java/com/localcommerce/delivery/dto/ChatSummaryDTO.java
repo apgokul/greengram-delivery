@@ -18,4 +18,5 @@ public class ChatSummaryDTO {
     private LocalDateTime lastMessageTimestamp;
     private MessageDirection lastMessageDirection;
     private boolean awaitingLocation;
+    private String profileName;
 }

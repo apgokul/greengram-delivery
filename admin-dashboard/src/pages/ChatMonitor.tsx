@@ -23,6 +23,20 @@ export default function ChatMonitor() {
         return /^\d+$/.test(id) ? `+${id}` : id;
     };
 
+    const getUsableProfileName = (name?: string | null): string | null => {
+        if (!name) return null;
+        const trimmed = name.trim();
+        if (!trimmed) return null;
+        const lower = trimmed.toLowerCase();
+        if (lower === 'valued customer' || lower === 'customer') {
+            return null;
+        }
+        return trimmed;
+    };
+
+    const selectedChat = chats.find((c) => c.phoneNumber === selectedPhone);
+    const selectedUsableName = getUsableProfileName(selectedChat?.profileName);
+
     const fetchChats = async () => {
         setLoadingChats(true);
         setChatsError(null);
@@ -118,9 +132,11 @@ export default function ChatMonitor() {
     const filteredChats = chats.filter((chat) => {
         const query = searchQuery.toLowerCase().trim();
         if (!query) return true;
+        const usableName = getUsableProfileName(chat.profileName);
         return (
             chat.phoneNumber.toLowerCase().includes(query) ||
-            chat.lastMessage.toLowerCase().includes(query)
+            chat.lastMessage.toLowerCase().includes(query) ||
+            (usableName ? usableName.toLowerCase().includes(query) : false)
         );
     });
 
@@ -174,7 +190,7 @@ export default function ChatMonitor() {
                         <input
                             type="text"
                             className="search-input"
-                            placeholder="Search by phone or snippet..."
+                            placeholder="Search by name, phone or snippet..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
@@ -206,6 +222,7 @@ export default function ChatMonitor() {
 
                     {filteredChats.map((chat) => {
                         const isSelected = selectedPhone === chat.phoneNumber;
+                        const usableName = getUsableProfileName(chat.profileName);
                         return (
                             <div
                                 key={chat.phoneNumber}
@@ -222,7 +239,16 @@ export default function ChatMonitor() {
                                 }}
                             >
                                 <div className="chat-item-header">
-                                    <span className="chat-item-phone">{displayIdentifier(chat.phoneNumber)}</span>
+                                    <div className="chat-item-title-col">
+                                        {usableName ? (
+                                            <>
+                                                <span className="chat-item-name">{usableName}</span>
+                                                <span className="chat-item-phone-sub">{displayIdentifier(chat.phoneNumber)}</span>
+                                            </>
+                                        ) : (
+                                            <span className="chat-item-phone">{displayIdentifier(chat.phoneNumber)}</span>
+                                        )}
+                                    </div>
                                     <span className="chat-item-time">{formatSnippetTime(chat.lastMessageTimestamp)}</span>
                                 </div>
                                 {chat.awaitingLocation && (
@@ -270,10 +296,25 @@ export default function ChatMonitor() {
                                     ← Chats
                                 </button>
                                 <div className="chat-header-title-group">
-                                    <h3 style={{ margin: 0 }}>{displayIdentifier(selectedPhone)}</h3>
-                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-                                        {messages.length} message{messages.length === 1 ? '' : 's'} recorded
-                                    </span>
+                                    {selectedUsableName ? (
+                                        <>
+                                            <h3 style={{ margin: 0 }}>{selectedUsableName}</h3>
+                                            <div className="chat-header-sub">
+                                                <span className="chat-header-phone">{displayIdentifier(selectedPhone)}</span>
+                                                <span className="chat-header-separator">•</span>
+                                                <span className="chat-header-count">
+                                                    {messages.length} message{messages.length === 1 ? '' : 's'} recorded
+                                                </span>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <h3 style={{ margin: 0 }}>{displayIdentifier(selectedPhone)}</h3>
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                                {messages.length} message{messages.length === 1 ? '' : 's'} recorded
+                                            </span>
+                                        </>
+                                    )}
                                 </div>
                             </div>
                             <button

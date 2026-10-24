@@ -14,7 +14,10 @@ import org.springframework.web.bind.annotation.*;
 import java.security.Principal;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import com.localcommerce.delivery.dto.ChatProfileNameProjection;
 
 @RestController
 @RequestMapping("/api/admin/messages")
@@ -49,13 +52,27 @@ public class AdminMessageController {
                 .toList();
 
         Set<String> awaitingLocationPhones;
+        Map<String, String> profileNamesByPhone;
+
         if (distinctPhoneNumbers.isEmpty()) {
             awaitingLocationPhones = Collections.emptySet();
+            profileNamesByPhone = Collections.emptyMap();
         } else {
             Set<String> found = orderRepo.findDistinctCustomerWhatsappNumbersWithOrdersAwaitingLocation(
                     distinctPhoneNumbers, ACTIVE_STATUSES
             );
             awaitingLocationPhones = found != null ? found : Collections.emptySet();
+
+            List<ChatProfileNameProjection> projections = messageLogRepository.findLatestProfileNames(distinctPhoneNumbers);
+            profileNamesByPhone = projections != null
+                    ? projections.stream()
+                            .filter(p -> p.phoneNumber() != null && p.profileName() != null && !p.profileName().isBlank())
+                            .collect(Collectors.toMap(
+                                    ChatProfileNameProjection::phoneNumber,
+                                    ChatProfileNameProjection::profileName,
+                                    (existing, replacement) -> existing
+                            ))
+                    : Collections.emptyMap();
         }
 
         List<ChatSummaryDTO> summaries = latestLogs.stream()
@@ -63,12 +80,17 @@ public class AdminMessageController {
                     boolean awaitingLoc = msgLog.getPhoneNumber() != null
                             && awaitingLocationPhones.contains(msgLog.getPhoneNumber());
 
+                    String profileName = msgLog.getPhoneNumber() != null
+                            ? profileNamesByPhone.get(msgLog.getPhoneNumber())
+                            : null;
+
                     return ChatSummaryDTO.builder()
                             .phoneNumber(msgLog.getPhoneNumber())
                             .lastMessage(msgLog.getMessageBody())
                             .lastMessageTimestamp(msgLog.getTimestamp())
                             .lastMessageDirection(msgLog.getDirection())
                             .awaitingLocation(awaitingLoc)
+                            .profileName(profileName)
                             .build();
                 })
                 .toList();

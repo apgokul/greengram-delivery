@@ -667,8 +667,27 @@ input[type="radio"] {
 .chat-item-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.25rem;
+  align-items: flex-start;
+  margin-bottom: 0.35rem;
+}
+
+.chat-item-title-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-item-name {
+  font-weight: 600;
+  font-size: 0.925rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-item.active .chat-item-name {
+  color: #065f46;
 }
 
 .chat-item-phone {
@@ -677,9 +696,44 @@ input[type="radio"] {
   color: var(--text-primary);
 }
 
+.chat-item-phone-sub {
+  font-size: 0.775rem;
+  color: var(--text-muted);
+  font-family: inherit;
+  margin-top: 0.1rem;
+}
+
+.chat-item.active .chat-item-phone-sub {
+  color: #047857;
+}
+
 .chat-item-time {
   font-size: 0.75rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 0.5rem;
+}
+
+.chat-header-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.15rem;
+}
+
+.chat-header-phone {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.chat-header-separator {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.chat-header-count {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
 }
 
 .chat-item-snippet {

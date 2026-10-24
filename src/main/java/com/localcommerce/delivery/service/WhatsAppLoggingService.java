@@ -31,12 +31,38 @@ public class WhatsAppLoggingService {
     }
 
     /**
+     * Normalizes a WhatsApp profile name.
+     * Trims whitespace and converts blank strings or generic placeholders
+     * ("Valued Customer", "Customer") to null.
+     */
+    public static String normalizeProfileName(String rawName) {
+        if (rawName == null) {
+            return null;
+        }
+        String trimmed = rawName.trim();
+        if (trimmed.isEmpty()
+                || trimmed.equalsIgnoreCase("Valued Customer")
+                || trimmed.equalsIgnoreCase("Customer")) {
+            return null;
+        }
+        return trimmed;
+    }
+
+    /**
      * Persists an inbound customer message safely in an isolated transaction.
      * Enforces deduplication using externalMessageId.
      * Uses REQUIRES_NEW so log persistence runs in an independent transaction.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logInbound(String phoneNumber, String messageBody, LocalDateTime timestamp, String externalMessageId) {
+        logInbound(phoneNumber, messageBody, timestamp, externalMessageId, null);
+    }
+
+    /**
+     * Persists an inbound customer message along with the sender's WhatsApp profile name.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logInbound(String phoneNumber, String messageBody, LocalDateTime timestamp, String externalMessageId, String profileName) {
         if (phoneNumber == null || phoneNumber.isBlank()) {
             log.warn("Cannot log inbound WhatsApp message: phoneNumber is blank.");
             return;
@@ -50,12 +76,15 @@ public class WhatsAppLoggingService {
             }
         }
 
+        String sanitizedProfileName = normalizeProfileName(profileName);
+
         WhatsAppMessageLog logEntry = WhatsAppMessageLog.builder()
                 .externalMessageId(externalMessageId)
                 .phoneNumber(phoneNumber)
                 .direction(MessageDirection.INBOUND)
                 .messageBody(messageBody != null ? messageBody : "")
                 .timestamp(timestamp != null ? timestamp : LocalDateTime.now(clock))
+                .profileName(sanitizedProfileName)
                 .build();
 
         repository.save(logEntry);

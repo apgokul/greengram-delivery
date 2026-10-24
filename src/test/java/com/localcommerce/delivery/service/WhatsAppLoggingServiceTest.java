@@ -204,4 +204,56 @@ class WhatsAppLoggingServiceTest {
             TimeZone.setDefault(originalDefault);
         }
     }
+
+    @Test
+    void testLogInbound_WithValidProfileName_PersistsProfileName() {
+        when(repository.existsByExternalMessageId("wamid.profile1")).thenReturn(false);
+
+        LocalDateTime now = LocalDateTime.now();
+        loggingService.logInbound("919876543210", "Hello with name", now, "wamid.profile1", "Anu Joseph");
+
+        ArgumentCaptor<WhatsAppMessageLog> captor = ArgumentCaptor.forClass(WhatsAppMessageLog.class);
+        verify(repository).save(captor.capture());
+
+        WhatsAppMessageLog saved = captor.getValue();
+        assertEquals("Anu Joseph", saved.getProfileName());
+    }
+
+    @Test
+    void testLogInbound_WithPlaceholderOrBlankProfileName_NormalizesToNull() {
+        when(repository.existsByExternalMessageId(anyString())).thenReturn(false);
+
+        LocalDateTime now = LocalDateTime.now();
+
+        // 1. "Valued Customer"
+        loggingService.logInbound("919876543210", "Msg 1", now, "wamid.p1", "Valued Customer");
+        // 2. "valued customer" (case-insensitive)
+        loggingService.logInbound("919876543210", "Msg 2", now, "wamid.p2", "valued customer");
+        // 3. "Customer"
+        loggingService.logInbound("919876543210", "Msg 3", now, "wamid.p3", "Customer");
+        // 4. Blank string
+        loggingService.logInbound("919876543210", "Msg 4", now, "wamid.p4", "   ");
+        // 5. Null
+        loggingService.logInbound("919876543210", "Msg 5", now, "wamid.p5", null);
+
+        ArgumentCaptor<WhatsAppMessageLog> captor = ArgumentCaptor.forClass(WhatsAppMessageLog.class);
+        verify(repository, times(5)).save(captor.capture());
+
+        List<WhatsAppMessageLog> allSaved = captor.getAllValues();
+        for (WhatsAppMessageLog log : allSaved) {
+            assertNull(log.getProfileName(), "Placeholder or blank profileName must be normalized to null");
+        }
+    }
+
+    @Test
+    void testNormalizeProfileName_Direct() {
+        assertNull(WhatsAppLoggingService.normalizeProfileName(null));
+        assertNull(WhatsAppLoggingService.normalizeProfileName(""));
+        assertNull(WhatsAppLoggingService.normalizeProfileName("   "));
+        assertNull(WhatsAppLoggingService.normalizeProfileName("Valued Customer"));
+        assertNull(WhatsAppLoggingService.normalizeProfileName("valued customer"));
+        assertNull(WhatsAppLoggingService.normalizeProfileName("Customer"));
+        assertNull(WhatsAppLoggingService.normalizeProfileName("customer"));
+        assertEquals("Anu Joseph", WhatsAppLoggingService.normalizeProfileName("  Anu Joseph  "));
+    }
 }
