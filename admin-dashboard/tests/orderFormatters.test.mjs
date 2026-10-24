@@ -118,17 +118,72 @@ describe('Order Formatters & Date Utilities', () => {
     });
 
     describe('formatTimestamp', () => {
-        it('formats valid ISO timestamp string in Kolkata timezone', () => {
+        it('formats timezone-less UTC string (such as Java LocalDateTime) into Asia/Kolkata', () => {
+            // 16:16:51 UTC is 21:46:51 IST (09:46 pm)
+            const formatted = formatTimestamp('2026-10-24T16:16:51.608646');
+            assert.match(formatted, /24\s+Oct\s+2026/i);
+            assert.match(formatted, /09:46/i);
+            assert.match(formatted, /pm/i);
+        });
+
+        it('formats valid ISO timestamp with Z in Kolkata timezone', () => {
             const formatted = formatTimestamp('2026-10-23T06:30:00Z');
             // 06:30 UTC is 12:00 IST
-            assert.ok(formatted.includes('23 Oct 2026') || formatted.includes('23/10/2026') || formatted.includes('Oct 23, 2026'));
-            assert.ok(formatted.includes('12:00'));
+            assert.match(formatted, /23\s+Oct\s+2026/i);
+            assert.match(formatted, /12:00/i);
+            assert.match(formatted, /pm/i);
+        });
+
+        it('respects explicit timezone offset (+05:30) as supplied', () => {
+            // 21:46:51+05:30 is 09:46 pm IST
+            const formatted = formatTimestamp('2026-10-24T21:46:51+05:30');
+            assert.match(formatted, /24\s+Oct\s+2026/i);
+            assert.match(formatted, /09:46/i);
+            assert.match(formatted, /pm/i);
+        });
+
+        it('handles variable fractional seconds from Java LocalDateTime serialization', () => {
+            const f1 = formatTimestamp('2026-10-24T16:16:51.1');
+            const f2 = formatTimestamp('2026-10-24T16:16:51.123456');
+            assert.match(f1, /24\s+Oct\s+2026/i);
+            assert.match(f1, /09:46/i);
+            assert.match(f2, /24\s+Oct\s+2026/i);
+            assert.match(f2, /09:46/i);
+        });
+
+        it('produces identical Asia/Kolkata output regardless of browser/system timezone', () => {
+            const originalTZ = process.env.TZ;
+            try {
+                const targetTimestamp = '2026-10-24T16:16:51.608646';
+                const results = [];
+
+                for (const tz of ['UTC', 'Asia/Kolkata', 'America/New_York', 'Asia/Tokyo', 'Europe/London']) {
+                    process.env.TZ = tz;
+                    const res = formatTimestamp(targetTimestamp);
+                    assert.match(res, /24\s+Oct\s+2026/i);
+                    assert.match(res, /09:46/i);
+                    assert.match(res, /pm/i);
+                    results.push(res);
+                }
+
+                // Verify all outputs across different timezones are strictly identical
+                for (let i = 1; i < results.length; i++) {
+                    assert.strictEqual(results[i], results[0]);
+                }
+            } finally {
+                process.env.TZ = originalTZ;
+            }
         });
 
         it('handles null or empty timestamp gracefully', () => {
             assert.strictEqual(formatTimestamp(null), '—');
             assert.strictEqual(formatTimestamp(undefined), '—');
             assert.strictEqual(formatTimestamp(''), '—');
+            assert.strictEqual(formatTimestamp('   '), '—');
+        });
+
+        it('returns raw string fallback for invalid date strings', () => {
+            assert.strictEqual(formatTimestamp('not-a-date'), 'not-a-date');
         });
     });
 

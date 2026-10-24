@@ -564,7 +564,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 any(),
-                eq("wamid.test999")
+                eq("wamid.test999"),
+                isNull()
         );
     }
 
@@ -654,7 +655,8 @@ class WhatsAppWebhookControllerTest {
                 eq(bsuid),
                 any(),
                 any(),
-                eq("wamid.bsuid123")
+                eq("wamid.bsuid123"),
+                eq("Jane Doe")
         );
 
         // Outbound reply must use the exact BSUID
@@ -708,7 +710,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         assertEquals(LocalDateTime.of(2024, 10, 18, 16, 0, 0), timestampCaptor.getValue());
@@ -734,7 +737,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         // Fallback should be 16:00:00 IST for the fixed instant
@@ -761,7 +765,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), timestampCaptor.getValue());
@@ -1004,5 +1009,103 @@ class WhatsAppWebhookControllerTest {
                 .andExpect(status().isOk());
 
         verify(orderService, times(1)).assignLocationToAllOrders(List.of(1042L, 1043L), "919876543210", 10.010, 76.210);
+    }
+
+    @Test
+    void testInboundWebhook_PassesProfileNameToLoggingService() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "id": "12345",
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "profile": {
+                                  "name": "Anu Joseph"
+                                },
+                                "wa_id": "919876543210"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.text_profile_test",
+                                "timestamp": "1729837200",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hello, do you have fresh green gram?"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                any(),
+                eq("wamid.text_profile_test"),
+                eq("Anu Joseph")
+        );
+    }
+
+    @Test
+    void testInboundWebhook_WithoutProfileName_PassesNullToLoggingService() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "id": "12345",
+                      "changes": [
+                        {
+                          "value": {
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.text_no_profile",
+                                "timestamp": "1729837200",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi there"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                any(),
+                eq("wamid.text_no_profile"),
+                isNull()
+        );
     }
 }

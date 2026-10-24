@@ -200,4 +200,88 @@ class WhatsAppMessageLogRepositoryTest {
         assertTrue(repository.existsByExternalMessageId(extId));
         assertFalse(repository.existsByExternalMessageId("non_existent_id"));
     }
+
+    @Test
+    void testFindLatestProfileNames_SelectsLatestProfileNameEvenWhenLatestMessageIsOutbound() {
+        String phone1 = "919876543210";
+        String phone2 = "919111111111";
+        LocalDateTime base = LocalDateTime.of(2026, 10, 20, 10, 0, 0);
+
+        // 1. Phone 1 - Inbound with old profile name
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone1)
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Hello")
+                .profileName("Anu Old")
+                .timestamp(base)
+                .build());
+
+        // 2. Phone 1 - Inbound with updated profile name
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone1)
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Second hello")
+                .profileName("Anu Joseph")
+                .timestamp(base.plusHours(1))
+                .build());
+
+        // 3. Phone 1 - Outbound bot reply (profileName is null)
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone1)
+                .direction(MessageDirection.OUTBOUND)
+                .messageBody("Bot reply")
+                .profileName(null)
+                .timestamp(base.plusHours(2))
+                .build());
+
+        // 4. Phone 2 - Single inbound with profile name
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone2)
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Bob message")
+                .profileName("Bob Dylan")
+                .timestamp(base.plusMinutes(30))
+                .build());
+
+        var results = repository.findLatestProfileNames(List.of(phone1, phone2, "919999999999"));
+
+        assertEquals(2, results.size(), "Should return exactly 2 projection entries");
+
+        var map = results.stream().collect(
+                java.util.stream.Collectors.toMap(
+                        com.localcommerce.delivery.dto.ChatProfileNameProjection::phoneNumber,
+                        com.localcommerce.delivery.dto.ChatProfileNameProjection::profileName
+                )
+        );
+
+        assertEquals("Anu Joseph", map.get(phone1), "Must select latest non-null profile name (Anu Joseph), not Anu Old or outbound null");
+        assertEquals("Bob Dylan", map.get(phone2));
+        assertNull(map.get("919999999999"));
+    }
+
+    @Test
+    void testFindLatestProfileNames_IgnoresBlankOrWhitespaceNames() {
+        String phone = "919222222222";
+        LocalDateTime base = LocalDateTime.of(2026, 10, 20, 10, 0, 0);
+
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone)
+                .direction(MessageDirection.INBOUND)
+                .messageBody("First message")
+                .profileName("Valid Name")
+                .timestamp(base)
+                .build());
+
+        repository.save(WhatsAppMessageLog.builder()
+                .phoneNumber(phone)
+                .direction(MessageDirection.INBOUND)
+                .messageBody("Second message")
+                .profileName("   ")
+                .timestamp(base.plusHours(1))
+                .build());
+
+        var results = repository.findLatestProfileNames(List.of(phone));
+        assertEquals(1, results.size());
+        assertEquals("Valid Name", results.getFirst().profileName());
+    }
 }

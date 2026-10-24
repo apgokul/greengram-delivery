@@ -139,12 +139,14 @@ public class WhatsAppWebhookController {
                     String rawFrom = message.getFrom();
                     String bsuid = null;
                     String whatsappName = "Valued Customer";
+                    String rawProfileName = null;
 
                     if (value.getContacts() != null && !value.getContacts().isEmpty()) {
                         WhatsAppWebhookPayload.Contact contact = value.getContacts().getFirst();
                         bsuid = contact.getUser_id();
                         if (contact.getProfile() != null && contact.getProfile().getName() != null) {
-                            whatsappName = contact.getProfile().getName();
+                            rawProfileName = contact.getProfile().getName();
+                            whatsappName = rawProfileName;
                         }
                     }
 
@@ -156,7 +158,7 @@ public class WhatsAppWebhookController {
                     try {
                         String loggedBody = loggingService.formatInboundMessage(message);
                         LocalDateTime messageTimestamp = parseMetaTimestampToIst(message.getTimestamp());
-                        loggingService.logInbound(phoneNumber, loggedBody, messageTimestamp, message.getId());
+                        loggingService.logInbound(phoneNumber, loggedBody, messageTimestamp, message.getId(), rawProfileName);
                     } catch (org.springframework.dao.DataIntegrityViolationException e) {
                         log.info("Duplicate inbound WhatsApp message skipped due to unique constraint: externalMessageId={}", message.getId());
                     } catch (Exception e) {
