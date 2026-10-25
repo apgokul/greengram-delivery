@@ -2,10 +2,16 @@ package com.localcommerce.delivery.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
+import com.localcommerce.delivery.dto.OrderProcessing;
+import com.localcommerce.delivery.enums.CancellationActor;
+import com.localcommerce.delivery.model.Customer;
+import com.localcommerce.delivery.model.CustomerOrder;
 import com.localcommerce.delivery.service.BatchingService;
 import com.localcommerce.delivery.service.OrderService;
 import com.localcommerce.delivery.service.WarehouseService;
 import com.localcommerce.delivery.utils.WebhookSignatureVerifier;
+import com.localcommerce.delivery.utils.WhatsAppConstants;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +38,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.mockito.ArgumentCaptor;
@@ -65,7 +72,7 @@ class WhatsAppWebhookControllerTest {
         ReflectionTestUtils.setField(controller, "signatureVerificationEnabled", true);
         ReflectionTestUtils.setField(controller, "authorizedRiders", List.of("919999999999"));
         ReflectionTestUtils.setField(controller, "warehousePhoneNumber", "918888888888");
-        
+
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
@@ -348,6 +355,146 @@ class WhatsAppWebhookControllerTest {
         verify(outboundClient).sendTextUpdate("918888888888", "Sorry, product is currently out of stock.");
     }
 
+    private String createButtonReplyPayload(String buttonId, String fromNumber) {
+        return """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "%s"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "%s",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "button_reply",
+                                  "button_reply": {
+                                    "id": "%s"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """.formatted(fromNumber, fromNumber, buttonId);
+    }
+
+    @Test
+    void testConfirmCheckout_Success_DoesNotSendDuplicatePackingAlert() throws Exception {
+        String payload = createButtonReplyPayload("CONFIRM_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).finalizeOrderCheckout(1042L);
+        // Verify duplicate packing alert is NOT sent by controller
+        verify(outboundClient, never()).sendTextUpdate(eq("918888888888"), eq(WhatsAppConstants.ORDER_PACKING_ALERT));
+    }
+
+    @Test
+    void testEditOrder_CreatedOrder_Success() throws Exception {
+        String payload = createButtonReplyPayload("EDIT_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.editOrder(1042L)).thenReturn(CancellationResult.success(null, CancellationActor.CUSTOMER, "Customer Edited Order"));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).editOrder(1042L);
+        verify(outboundClient, never()).sendCatalogMessage(any());
+    }
+
+    @Test
+    void testEditOrder_AlreadyConfirmed_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("EDIT_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.editOrder(1042L)).thenReturn(CancellationResult.notAllowed(
+                "This order is already being prepared or out for delivery and can no longer be edited.",
+                null,
+                CancellationActor.CUSTOMER
+        ));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService).editOrder(1042L);
+        verify(outboundClient).sendTextUpdate("918888888888", "This order is already being prepared or out for delivery and can no longer be edited.");
+    }
+
+    @Test
+    void testCancelOrder_Customer_DeliveredOrder_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("CANCEL_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Cancelled", CancellationActor.CUSTOMER))
+                .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.CUSTOMER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(outboundClient).sendTextUpdate("918888888888", "This order has already been delivered and cannot be cancelled.");
+    }
+
+    @Test
+    void testCancelOrder_Customer_AlreadyCancelled_ReturnsFeedback() throws Exception {
+        String payload = createButtonReplyPayload("CANCEL_ORDER_1042", "918888888888");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Cancelled", CancellationActor.CUSTOMER))
+                .thenReturn(CancellationResult.alreadyCancelled(null, CancellationActor.CUSTOMER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(outboundClient).sendTextUpdate("918888888888", "This order is already cancelled.");
+    }
+
+    @Test
+    void testRiderCancel_Delivered_FeedbackToRiderNotCustomer() throws Exception {
+        String payload = createButtonReplyPayload(WhatsAppConstants.RIDER_CANCEL_REASON + "UNREACHABLE_1042", "919999999999");
+        String signature = generateSignature(payload);
+
+        when(orderService.cancelOrder(1042L, "Customer Unreachable", CancellationActor.RIDER))
+                .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.RIDER));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Feedback is sent to rider (919999999999), not customer!
+        verify(outboundClient).sendTextUpdate("919999999999", "⚠️ This order has already been delivered and cannot be cancelled.");
+    }
+
 
 
     private String createTextPayload(String text, String fromNumber) {
@@ -417,7 +564,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 any(),
-                eq("wamid.test999")
+                eq("wamid.test999"),
+                isNull()
         );
     }
 
@@ -507,7 +655,8 @@ class WhatsAppWebhookControllerTest {
                 eq(bsuid),
                 any(),
                 any(),
-                eq("wamid.bsuid123")
+                eq("wamid.bsuid123"),
+                eq("Jane Doe")
         );
 
         // Outbound reply must use the exact BSUID
@@ -561,7 +710,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         assertEquals(LocalDateTime.of(2024, 10, 18, 16, 0, 0), timestampCaptor.getValue());
@@ -587,7 +737,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         // Fallback should be 16:00:00 IST for the fixed instant
@@ -614,7 +765,8 @@ class WhatsAppWebhookControllerTest {
                 eq("919876543210"),
                 any(),
                 timestampCaptor.capture(),
-                eq("wamid.msg123")
+                eq("wamid.msg123"),
+                isNull()
         );
 
         assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0), timestampCaptor.getValue());
@@ -638,5 +790,322 @@ class WhatsAppWebhookControllerTest {
         assertEquals(LocalDateTime.of(2026, 10, 18, 16, 0, 0),
                 controller.parseMetaTimestampToIst("invalid_seconds"));
     }
-}
 
+    @Test
+    void testReceiveMessage_ProcessingExceptionDispatchesApologyAndCleansUpContext() throws Exception {
+        String payload = createTextPayload("Hi", "919876543210");
+        String signature = generateSignature(payload);
+
+        doThrow(new RuntimeException("Simulated unexpected failure during catalog send"))
+                .when(outboundClient).sendCatalogMessage("919876543210");
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // Must dispatch fallback apology to customer
+        verify(outboundClient).sendTextUpdate(
+                eq("919876543210"),
+                eq(com.localcommerce.delivery.exception.GlobalExceptionHandler.FALLBACK_APOLOGY_MESSAGE)
+        );
+
+        // UserContext must be cleared and not leaked to the thread
+        assertNull(com.localcommerce.delivery.utils.UserContext.getPhoneNumber());
+    }
+
+    @Test
+    void testReceiveMessage_PostCommitOrderPromptFailure_DoesNotSendApology() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "wa_id": "919876543210",
+                                "profile": {
+                                  "name": "John Doe"
+                                }
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.order123",
+                                "type": "order",
+                                "order": {
+                                  "catalog_id": "cat_123",
+                                  "product_items": [
+                                    {
+                                      "product_retailer_id": "RICE-1KG",
+                                      "quantity": "2"
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        Customer customer = new Customer();
+        customer.setWhatsappNumber("919876543210");
+
+        CustomerOrder savedOrder = new CustomerOrder();
+        savedOrder.setId(1042L);
+        savedOrder.setDisplayId("ORD-1042");
+        savedOrder.setCustomer(customer);
+
+        OrderProcessing.OrderProcessResult successResult = OrderProcessing.OrderProcessResult.success(savedOrder);
+        when(orderService.processNewCart(any(), any(), any(), any())).thenReturn(successResult);
+
+        // Outbound invoice prompt fails post-commit (e.g. Meta API network timeout)
+        doThrow(new RuntimeException("Meta API timeout"))
+                .when(outboundClient).sendOrderSummaryPrompt(eq("919876543210"), eq(savedOrder));
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        // CRUCIAL: Must NEVER send fallback apology telling customer to restart, because the order is committed!
+        verify(outboundClient, never()).sendTextUpdate(
+                eq("919876543210"),
+                eq(com.localcommerce.delivery.exception.GlobalExceptionHandler.FALLBACK_APOLOGY_MESSAGE)
+        );
+
+        // Context must be cleared
+        assertNull(com.localcommerce.delivery.utils.UserContext.getPhoneNumber());
+    }
+
+    @Test
+    void testInteractiveButtonReply_ReuseSavedLocation_PassesSenderPhoneNumber() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.btn_reuse_123",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "button_reply",
+                                  "button_reply": {
+                                    "id": "REUSE_LOC_1042",
+                                    "title": "Use Saved Location"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService, times(1)).confirmSavedLocation(1042L, "919876543210");
+    }
+
+    @Test
+    void testInteractiveButtonReply_SetLocSingle_PassesSenderPhoneNumber() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.btn_setloc_123",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "button_reply",
+                                  "button_reply": {
+                                    "id": "SETLOC_1042_10.010_76.210",
+                                    "title": "Set Location"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService, times(1)).assignLocationToOrder(1042L, "919876543210", 10.010, 76.210);
+    }
+
+    @Test
+    void testInteractiveButtonReply_SetLocAll_PassesSenderPhoneNumber() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "changes": [
+                        {
+                          "value": {
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.btn_setloc_all_123",
+                                "type": "interactive",
+                                "interactive": {
+                                  "type": "button_reply",
+                                  "button_reply": {
+                                    "id": "SETLOC_ALL_10.010_76.210_1042_1043",
+                                    "title": "Set Location for All"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(orderService, times(1)).assignLocationToAllOrders(List.of(1042L, 1043L), "919876543210", 10.010, 76.210);
+    }
+
+    @Test
+    void testInboundWebhook_PassesProfileNameToLoggingService() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "id": "12345",
+                      "changes": [
+                        {
+                          "value": {
+                            "contacts": [
+                              {
+                                "profile": {
+                                  "name": "Anu Joseph"
+                                },
+                                "wa_id": "919876543210"
+                              }
+                            ],
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.text_profile_test",
+                                "timestamp": "1729837200",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hello, do you have fresh green gram?"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                any(),
+                eq("wamid.text_profile_test"),
+                eq("Anu Joseph")
+        );
+    }
+
+    @Test
+    void testInboundWebhook_WithoutProfileName_PassesNullToLoggingService() throws Exception {
+        String payload = """
+                {
+                  "entry": [
+                    {
+                      "id": "12345",
+                      "changes": [
+                        {
+                          "value": {
+                            "messages": [
+                              {
+                                "from": "919876543210",
+                                "id": "wamid.text_no_profile",
+                                "timestamp": "1729837200",
+                                "type": "text",
+                                "text": {
+                                  "body": "Hi there"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+                """;
+        String signature = generateSignature(payload);
+
+        mockMvc.perform(post("/api/webhooks/whatsapp")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload)
+                        .header("X-Hub-Signature-256", signature))
+                .andExpect(status().isOk());
+
+        verify(loggingService).logInbound(
+                eq("919876543210"),
+                any(),
+                any(),
+                eq("wamid.text_no_profile"),
+                isNull()
+        );
+    }
+}

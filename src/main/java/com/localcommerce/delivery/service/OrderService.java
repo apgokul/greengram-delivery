@@ -1,32 +1,37 @@
 package com.localcommerce.delivery.service;
 
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
+import com.localcommerce.delivery.dto.CancellationResult;
 import com.localcommerce.delivery.dto.CartItemDTO;
 import com.localcommerce.delivery.dto.OrderProcessing;
+import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.Customer;
 import com.localcommerce.delivery.model.CustomerOrder;
+import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.model.OrderItem;
 import com.localcommerce.delivery.model.Product;
 import com.localcommerce.delivery.repository.CustomerOrderRepository;
 import com.localcommerce.delivery.repository.CustomerRepository;
 import com.localcommerce.delivery.repository.DeliveryRunRepository;
 import com.localcommerce.delivery.repository.ProductRepository;
-import com.localcommerce.delivery.model.DeliveryRun;
 import com.localcommerce.delivery.utils.DeliveryConstants;
 import com.localcommerce.delivery.utils.DistanceUtil;
 import com.localcommerce.delivery.utils.WhatsAppConstants;
 import jakarta.persistence.EntityNotFoundException;
-import jakarta.transaction.Transactional;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
-import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.transaction.PlatformTransactionManager;
 
 @Service
 @Transactional
@@ -42,6 +47,14 @@ public class OrderService {
     private final CustomerIdentityService customerIdentityService;
     private final DeliveryRunRepository deliveryRepo;
     private final TransactionTemplate transactionTemplate;
+    private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(Clock clock) {
+        if (clock != null) {
+            this.clock = clock;
+        }
+    }
 
     @Value("${store.latitude}")
     private Double storeLat;
@@ -165,77 +178,506 @@ public class OrderService {
         return OrderProcessing.OrderProcessResult.success(savedOrder);
     }
 
-    @Transactional
+    public record DisambiguationCandidateSnapshot(
+            Long id,
+            String displayId,
+            BigDecimal totalAmount
+    ) {
+        public CustomerOrder toSnapshotOrder() {
+            CustomerOrder snapshot = new CustomerOrder();
+            snapshot.setId(id);
+            snapshot.setDisplayId(displayId);
+            snapshot.setTotalAmount(totalAmount);
+            return snapshot;
+        }
+    }
+
+    public record CustomerLocationUpdateResult(
+            UpdateAction action,
+            String recipientId,
+            List<DisambiguationCandidateSnapshot> candidateSnapshots,
+            Double lat,
+            Double lng
+    ) {
+        public enum UpdateAction {
+            PROFILE_ONLY,
+            SINGLE_ORDER_ASSIGNED,
+            ORDER_ALREADY_ASSIGNED,
+            MULTIPLE_ORDERS_DISAMBIGUATION
+        }
+    }
+
+    public record SavedLocationConfirmationResult(
+            Outcome outcome,
+            String recipientId,
+            String displayId
+    ) {
+        public enum Outcome {
+            LOCATION_CONFIRMED,
+            PROMPT_NEW_LOCATION,
+            ALREADY_HAS_LOCATION,
+            ORDER_CANCELLED,
+            ORDER_DELIVERED,
+            RUN_COMPLETED,
+            UNAUTHORIZED
+        }
+
+        public boolean hasSavedLocation() {
+            return outcome == Outcome.LOCATION_CONFIRMED;
+        }
+    }
+
+    public record MultiOrderLocationAssignmentResult(
+            int updatedCount,
+            int alreadyHadLocationCount,
+            int terminalOrIneligibleCount,
+            int unauthorizedCount,
+            int missingCount,
+            String recipientId
+    ) {
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void updateCustomerLocation(String customerKey, Double lat, Double lng) {
-
-        // FIX 1: Look up by BSUID first, fallback to Phone Number
-        Customer customer = customerRepo.findByBsuid(customerKey)
-                .orElseGet(() -> customerRepo.findByWhatsappNumber(customerKey)
-                        .orElseThrow(() -> new RuntimeException("Customer not found for key: " + customerKey)));
-
-        String recipientId = customer.getRecipientId();
-
-        // Calculate distance
+        // Calculate distance & enforce radius limit outside transaction
         double distanceKm = DistanceUtil.calculateDistance(storeLat, storeLng, lat, lng);
         log.info("Customer {} dropped pin at distance: {} km", customerKey, distanceKm);
 
-        // Enforce radius limit
+        if (distanceKm > maxRadiusKm) {
+            Customer customer = customerRepo.findByBsuid(customerKey)
+                    .orElseGet(() -> customerRepo.findByWhatsappNumber(customerKey)
+                            .orElseThrow(() -> new RuntimeException("Customer not found for key: " + customerKey)));
+            String recipientId = customer.getRecipientId();
+            String outOfBoundsMessage = String.format(
+                    WhatsAppConstants.OUT_OF_BOUNDS_TEMPLATE,
+                    distanceKm, maxRadiusKm
+            );
+            try {
+                outboundClient.sendTextUpdate(recipientId, outOfBoundsMessage);
+            } catch (Exception e) {
+                log.warn("Failed to deliver out-of-bounds message to {}: {}", recipientId, e.getMessage());
+            }
+            return;
+        }
+
+        CustomerLocationUpdateResult result = transactionTemplate.execute(status -> {
+            Customer customer = customerRepo.findByBsuid(customerKey)
+                    .orElseGet(() -> customerRepo.findByWhatsappNumber(customerKey)
+                            .orElseThrow(() -> new RuntimeException("Customer not found for key: " + customerKey)));
+
+            String recipientId = customer.getRecipientId();
+
+            List<OrderStatus> candidateStatuses = List.of(
+                    OrderStatus.CREATED, OrderStatus.PENDING_WAREHOUSE,
+                    OrderStatus.PACKING, OrderStatus.READY, OrderStatus.DISPATCHED
+            );
+            List<CustomerOrder> candidateOrders = orderRepo.findByCustomerIdAndStatusInAndDeliveryLatitudeIsNullOrderByCreatedAtDesc(
+                    customer.getId(), candidateStatuses
+            );
+
+            if (candidateOrders.isEmpty()) {
+                customer.setLatitude(lat);
+                customer.setLongitude(lng);
+                customerRepo.save(customer);
+                return new CustomerLocationUpdateResult(
+                        CustomerLocationUpdateResult.UpdateAction.PROFILE_ONLY,
+                        recipientId,
+                        List.of(),
+                        lat,
+                        lng
+                );
+            } else if (candidateOrders.size() == 1) {
+                CustomerOrder singleOrder = candidateOrders.get(0);
+
+                // LOCK ORDER HIERARCHY:
+                // Level 1: CustomerOrder
+                // Level 2: Customer
+                CustomerOrder lockedOrder = orderRepo.findByIdForUpdate(singleOrder.getId())
+                        .orElseThrow(() -> new RuntimeException("Order not found: " + singleOrder.getId()));
+
+                boolean isEligible = candidateStatuses.contains(lockedOrder.getStatus())
+                        && lockedOrder.getDeliveryLatitude() == null
+                        && (lockedOrder.getDeliveryRun() == null || lockedOrder.getDeliveryRun().getStatus() != DeliveryRun.RunStatus.COMPLETED);
+
+                if (isEligible) {
+                    lockedOrder.setDeliveryLatitude(lat);
+                    lockedOrder.setDeliveryLongitude(lng);
+                    orderRepo.save(lockedOrder);
+
+                    customer.setLatitude(lat);
+                    customer.setLongitude(lng);
+                    customerRepo.save(customer);
+
+                    return new CustomerLocationUpdateResult(
+                            CustomerLocationUpdateResult.UpdateAction.SINGLE_ORDER_ASSIGNED,
+                            recipientId,
+                            List.of(),
+                            lat,
+                            lng
+                    );
+                } else {
+                    // Stale candidate: order already has location assigned or is no longer eligible.
+                    // Do not overwrite order coordinates; update customer profile default.
+                    customer.setLatitude(lat);
+                    customer.setLongitude(lng);
+                    customerRepo.save(customer);
+
+                    return new CustomerLocationUpdateResult(
+                            CustomerLocationUpdateResult.UpdateAction.ORDER_ALREADY_ASSIGNED,
+                            recipientId,
+                            List.of(),
+                            lat,
+                            lng
+                    );
+                }
+            } else {
+                customer.setLatitude(lat);
+                customer.setLongitude(lng);
+                customerRepo.save(customer);
+
+                List<DisambiguationCandidateSnapshot> snapshots = candidateOrders.stream()
+                        .map(o -> new DisambiguationCandidateSnapshot(o.getId(), o.getDisplayId(), o.getTotalAmount()))
+                        .toList();
+
+                return new CustomerLocationUpdateResult(
+                        CustomerLocationUpdateResult.UpdateAction.MULTIPLE_ORDERS_DISAMBIGUATION,
+                        recipientId,
+                        snapshots,
+                        lat,
+                        lng
+                );
+            }
+        });
+
+        if (result != null && result.recipientId() != null) {
+            try {
+                switch (result.action()) {
+                    case PROFILE_ONLY, ORDER_ALREADY_ASSIGNED -> {
+                        outboundClient.sendTextUpdate(result.recipientId(), "📍 Your location has been updated & saved for your future orders.");
+                    }
+                    case SINGLE_ORDER_ASSIGNED -> {
+                        outboundClient.sendTextUpdate(result.recipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
+                    }
+                    case MULTIPLE_ORDERS_DISAMBIGUATION -> {
+                        List<CustomerOrder> snapshotOrders = result.candidateSnapshots().stream()
+                                .map(DisambiguationCandidateSnapshot::toSnapshotOrder)
+                                .toList();
+                        outboundClient.sendLocationDisambiguationPrompt(result.recipientId(), snapshotOrders, result.lat(), result.lng());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to deliver post-commit location update notification to {}: {}", result.recipientId(), e.getMessage());
+            }
+        }
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void assignLocationToOrder(Long orderId, String senderNumber, Double lat, Double lng) {
+        double distanceKm = DistanceUtil.calculateDistance(storeLat, storeLng, lat, lng);
         if (distanceKm > maxRadiusKm) {
             String outOfBoundsMessage = String.format(
                     WhatsAppConstants.OUT_OF_BOUNDS_TEMPLATE,
                     distanceKm, maxRadiusKm
             );
-            outboundClient.sendTextUpdate(recipientId, outOfBoundsMessage);
+            if (senderNumber != null) {
+                try {
+                    outboundClient.sendTextUpdate(senderNumber, outOfBoundsMessage);
+                } catch (Exception e) {
+                    log.warn("Failed to deliver out-of-bounds message to {}: {}", senderNumber, e.getMessage());
+                }
+            }
             return;
         }
 
-        CustomerOrder pendingOrder = orderRepo.findTopByCustomerIdAndStatusOrderByCreatedAtDesc(
-                        customer.getId(), OrderStatus.CREATED)
-                .orElseThrow(() -> new RuntimeException("No pending order waiting for location"));
+        String confirmationMsg = transactionTemplate.execute(status -> {
+            // Level 1 Lock: CustomerOrder
+            CustomerOrder order = orderRepo.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
 
-        // Update customer profile
-        customer.setLatitude(lat);
-        customer.setLongitude(lng);
-        customerRepo.save(customer);
+            Customer customer = order.getCustomer();
+            String storedNumber = (customer != null) ? customer.getWhatsappNumber() : null;
+            if (storedNumber == null || senderNumber == null || !storedNumber.equals(senderNumber)) {
+                log.warn("Unauthorized location assignment attempt for order {} by {}", orderId, senderNumber);
+                return "Unauthorized order location update.";
+            }
 
-        // Snapshot coordinates onto order
-        pendingOrder.setDeliveryLatitude(lat);
-        pendingOrder.setDeliveryLongitude(lng);
-        orderRepo.save(pendingOrder);
+            // Caller is authorized and coordinates are within valid radius.
+            // Level 2: Update customer profile default location for future orders.
+            if (customer != null) {
+                customer.setLatitude(lat);
+                customer.setLongitude(lng);
+                customerRepo.save(customer);
+            }
 
-        // FIX 2: Send summary prompt using recipientId
-        outboundClient.sendOrderSummaryPrompt(recipientId, pendingOrder);
+            if (order.getDeliveryLatitude() != null) {
+                log.info("Order {} already has delivery location assigned. Preserving existing.", orderId);
+                return "Order #" + order.getDisplayId() + " already has a confirmed delivery location.";
+            }
+
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                log.info("Order {} is CANCELLED. Preserving status and skipping coordinate update.", orderId);
+                return "Order #" + order.getDisplayId() + " has been cancelled and cannot be assigned a delivery location.";
+            }
+
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                log.info("Order {} is DELIVERED. Preserving status and skipping coordinate update.", orderId);
+                return "Order #" + order.getDisplayId() + " has already been delivered.";
+            }
+
+            if (order.getDeliveryRun() != null && order.getDeliveryRun().getStatus() == DeliveryRun.RunStatus.COMPLETED) {
+                log.info("Order {} delivery run is COMPLETED. Skipping coordinate update.", orderId);
+                return "Order #" + order.getDisplayId() + " delivery run has already been completed.";
+            }
+
+            order.setDeliveryLatitude(lat);
+            order.setDeliveryLongitude(lng);
+            orderRepo.save(order);
+
+            return WhatsAppConstants.LOCATION_CONFIRMED_NATURAL;
+        });
+
+        if (confirmationMsg != null && senderNumber != null) {
+            try {
+                outboundClient.sendTextUpdate(senderNumber, confirmationMsg);
+            } catch (Exception e) {
+                log.warn("Failed to send outbound WhatsApp confirmation to {}: {}", senderNumber, e.getMessage());
+            }
+        }
     }
 
-    @Transactional
-    public void confirmSavedLocation(Long orderId) {
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void assignLocationToAllOrders(List<Long> orderIds, String senderNumber, Double lat, Double lng) {
+        double distanceKm = DistanceUtil.calculateDistance(storeLat, storeLng, lat, lng);
+        if (distanceKm > maxRadiusKm) {
+            String outOfBoundsMessage = String.format(
+                    WhatsAppConstants.OUT_OF_BOUNDS_TEMPLATE,
+                    distanceKm, maxRadiusKm
+            );
+            if (senderNumber != null) {
+                try {
+                    outboundClient.sendTextUpdate(senderNumber, outOfBoundsMessage);
+                } catch (Exception e) {
+                    log.warn("Failed to deliver out-of-bounds message to {}: {}", senderNumber, e.getMessage());
+                }
+            }
+            return;
+        }
 
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new RuntimeException("Order not found"));
+        // Sort order IDs in ascending order to prevent deadlocks
+        List<Long> sortedIds = orderIds.stream().sorted().toList();
 
-        Customer customer = order.getCustomer();
+        MultiOrderLocationAssignmentResult result = transactionTemplate.execute(status -> {
+            int updatedCount = 0;
+            int alreadyHadLocationCount = 0;
+            int terminalOrIneligibleCount = 0;
+            int unauthorizedCount = 0;
+            int missingCount = 0;
 
-        order.setDeliveryLatitude(customer.getLatitude());
-        order.setDeliveryLongitude(customer.getLongitude());
-        orderRepo.save(order);
+            for (Long orderId : sortedIds) {
+                CustomerOrder order = orderRepo.findByIdForUpdate(orderId).orElse(null);
+                if (order == null) {
+                    missingCount++;
+                    continue;
+                }
 
-        // FIX 3: Use customer.getRecipientId() instead of getWhatsappNumber()
-        outboundClient.sendOrderSummaryPrompt(customer.getRecipientId(), order);
+                Customer customer = order.getCustomer();
+                String storedNumber = (customer != null) ? customer.getWhatsappNumber() : null;
+                if (storedNumber == null || senderNumber == null || !storedNumber.equals(senderNumber)) {
+                    log.warn("Unauthorized location assignment for order {} by {}", orderId, senderNumber);
+                    unauthorizedCount++;
+                    continue;
+                }
+
+                if (order.getDeliveryLatitude() != null) {
+                    log.info("Order {} already has confirmed delivery location. Preserving existing.", orderId);
+                    alreadyHadLocationCount++;
+                    continue;
+                }
+
+                if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.DELIVERED
+                        || (order.getDeliveryRun() != null && order.getDeliveryRun().getStatus() == DeliveryRun.RunStatus.COMPLETED)) {
+                    log.info("Order {} is terminal or run completed (status={}, run={}). Skipping.",
+                            orderId, order.getStatus(), order.getDeliveryRun() != null ? order.getDeliveryRun().getStatus() : null);
+                    terminalOrIneligibleCount++;
+                    continue;
+                }
+
+                order.setDeliveryLatitude(lat);
+                order.setDeliveryLongitude(lng);
+                orderRepo.save(order);
+                updatedCount++;
+            }
+
+            // Level 2: Update customer profile default location ONLY if at least one selected order was successfully updated
+            if (updatedCount > 0 && senderNumber != null) {
+                customerRepo.findByWhatsappNumber(senderNumber).ifPresent(c -> {
+                    c.setLatitude(lat);
+                    c.setLongitude(lng);
+                    customerRepo.save(c);
+                });
+            }
+
+            return new MultiOrderLocationAssignmentResult(
+                    updatedCount,
+                    alreadyHadLocationCount,
+                    terminalOrIneligibleCount,
+                    unauthorizedCount,
+                    missingCount,
+                    senderNumber
+            );
+        });
+
+        if (result != null && result.recipientId() != null) {
+            try {
+                if (result.updatedCount() > 0) {
+                    outboundClient.sendTextUpdate(result.recipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
+                } else if (result.alreadyHadLocationCount() > 0 && result.terminalOrIneligibleCount() == 0 && result.unauthorizedCount() == 0 && result.missingCount() == 0) {
+                    outboundClient.sendTextUpdate(result.recipientId(), "Your active orders already have confirmed delivery locations.");
+                } else if (result.terminalOrIneligibleCount() > 0) {
+                    outboundClient.sendTextUpdate(result.recipientId(), "None of the selected orders are awaiting a delivery location.");
+                } else if (result.alreadyHadLocationCount() > 0) {
+                    outboundClient.sendTextUpdate(result.recipientId(), "Your active orders already have confirmed delivery locations.");
+                } else if (result.unauthorizedCount() > 0) {
+                    outboundClient.sendTextUpdate(result.recipientId(), "Unauthorized order location update.");
+                } else {
+                    outboundClient.sendTextUpdate(result.recipientId(), "No selected orders were found awaiting a location update.");
+                }
+            } catch (Exception e) {
+                log.warn("Failed to deliver multi-order location confirmation to {}: {}", result.recipientId(), e.getMessage());
+            }
+        }
+    }
+
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public void confirmSavedLocation(Long orderId, String senderNumber) {
+        SavedLocationConfirmationResult result = transactionTemplate.execute(status -> {
+            // Level 1 Lock: CustomerOrder
+            CustomerOrder order = orderRepo.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
+
+            Customer customer = order.getCustomer();
+            if (customer == null) {
+                throw new IllegalStateException("Order " + orderId + " has no associated customer");
+            }
+
+            String storedNumber = customer.getWhatsappNumber();
+            String recipientId = customer.getRecipientId();
+            String displayId = order.getDisplayId();
+
+            if (storedNumber == null || senderNumber == null || !storedNumber.equals(senderNumber)) {
+                log.warn("Unauthorized saved location confirmation attempt for order {} by {}", orderId, senderNumber);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.UNAUTHORIZED,
+                        senderNumber != null ? senderNumber : recipientId,
+                        displayId
+                );
+            }
+
+            if (order.getDeliveryLatitude() != null) {
+                log.info("Order {} already has confirmed delivery location. Skipping saved location reuse.", orderId);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.ALREADY_HAS_LOCATION,
+                        recipientId,
+                        displayId
+                );
+            }
+
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                log.info("Order {} is CANCELLED. Skipping saved location reuse.", orderId);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.ORDER_CANCELLED,
+                        recipientId,
+                        displayId
+                );
+            }
+
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                log.info("Order {} is DELIVERED. Skipping saved location reuse.", orderId);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.ORDER_DELIVERED,
+                        recipientId,
+                        displayId
+                );
+            }
+
+            if (order.getDeliveryRun() != null && order.getDeliveryRun().getStatus() == DeliveryRun.RunStatus.COMPLETED) {
+                log.info("Order {} delivery run is already COMPLETED. Skipping saved location reuse.", orderId);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.RUN_COMPLETED,
+                        recipientId,
+                        displayId
+                );
+            }
+
+            Double savedLat = customer.getLatitude();
+            Double savedLng = customer.getLongitude();
+
+            if (savedLat != null && savedLng != null) {
+                order.setDeliveryLatitude(savedLat);
+                order.setDeliveryLongitude(savedLng);
+                orderRepo.save(order);
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.LOCATION_CONFIRMED,
+                        recipientId,
+                        displayId
+                );
+            } else {
+                return new SavedLocationConfirmationResult(
+                        SavedLocationConfirmationResult.Outcome.PROMPT_NEW_LOCATION,
+                        recipientId,
+                        displayId
+                );
+            }
+        });
+
+        if (result != null && result.recipientId() != null) {
+            try {
+                switch (result.outcome()) {
+                    case LOCATION_CONFIRMED -> outboundClient.sendTextUpdate(result.recipientId(), WhatsAppConstants.LOCATION_CONFIRMED_NATURAL);
+                    case PROMPT_NEW_LOCATION -> outboundClient.sendDeliveryLocationPrompt(result.recipientId());
+                    case ALREADY_HAS_LOCATION -> outboundClient.sendTextUpdate(result.recipientId(), "Order #" + result.displayId() + " already has a confirmed delivery location.");
+                    case ORDER_CANCELLED -> outboundClient.sendTextUpdate(result.recipientId(), "Order #" + result.displayId() + " has been cancelled and cannot be assigned a delivery location.");
+                    case ORDER_DELIVERED -> outboundClient.sendTextUpdate(result.recipientId(), "Order #" + result.displayId() + " has already been delivered.");
+                    case RUN_COMPLETED -> outboundClient.sendTextUpdate(result.recipientId(), "Order #" + result.displayId() + " delivery run has already been completed.");
+                    case UNAUTHORIZED -> outboundClient.sendTextUpdate(result.recipientId(), "Unauthorized order location update.");
+                }
+            } catch (Exception e) {
+                log.warn("Failed to deliver saved location notification to {}: {}", result.recipientId(), e.getMessage());
+            }
+        }
     }
 
     public static class CheckoutResult {
         public final CustomerOrder order;
         public final List<com.localcommerce.delivery.model.Inventory> lowStockInventories;
-        public CheckoutResult(CustomerOrder order, List<com.localcommerce.delivery.model.Inventory> lowStockInventories) {
+        public final boolean locationPromptNeeded;
+        public final boolean hasSavedLocation;
+        public final Double savedLat;
+        public final Double savedLng;
+        public final Instant checkoutInstant;
+
+        public CheckoutResult(CustomerOrder order,
+                              List<com.localcommerce.delivery.model.Inventory> lowStockInventories,
+                              boolean locationPromptNeeded,
+                              boolean hasSavedLocation,
+                              Double savedLat,
+                              Double savedLng,
+                              Instant checkoutInstant) {
             this.order = order;
             this.lowStockInventories = lowStockInventories;
+            this.locationPromptNeeded = locationPromptNeeded;
+            this.hasSavedLocation = hasSavedLocation;
+            this.savedLat = savedLat;
+            this.savedLng = savedLng;
+            this.checkoutInstant = checkoutInstant;
         }
     }
 
     @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
     public void finalizeOrderCheckout(Long orderId) {
         CheckoutResult result = transactionTemplate.execute(status -> {
-            CustomerOrder order = orderRepo.findById(orderId)
+            // Level 1 Lock: CustomerOrder
+            CustomerOrder order = orderRepo.findByIdForUpdate(orderId)
                     .orElseThrow(() -> new RuntimeException("Order not found: " + orderId));
 
             // Idempotency guard — prevents double-processing if the customer taps Confirm twice
@@ -245,8 +687,11 @@ public class OrderService {
                 return null;
             }
 
+            Instant checkoutInstant = clock.instant();
+
             java.util.List<com.localcommerce.delivery.model.Inventory> lowStockInventories = new java.util.ArrayList<>();
 
+            // Level 2 Locks: Sort inventories by ID ASC to prevent deadlocks
             java.util.List<com.localcommerce.delivery.model.Inventory> inventoriesToLock = order.getItems().stream()
                     .map(item -> item.getProduct().getInventory())
                     .distinct()
@@ -272,6 +717,9 @@ public class OrderService {
                 BigDecimal itemPhysicalQty = product.getPackageQuantity().multiply(BigDecimal.valueOf(item.getQuantity()));
                 BigDecimal convertedQty = com.localcommerce.delivery.utils.UnitConverter.convert(itemPhysicalQty, product.getPackageUnit(), product.getInventory().getUnit());
 
+                // SNAPSHOT: Store exact deducted quantity on the OrderItem
+                item.setDeductedQuantity(convertedQty);
+
                 inventoryRequirements.merge(product.getInventory(), convertedQty, BigDecimal::add);
                 representativeProducts.put(product.getInventory(), product);
             }
@@ -293,7 +741,7 @@ public class OrderService {
                 }
 
                 lockedInv.setStockQuantity(lockedInv.getStockQuantity().subtract(required));
-                
+
                 if (lockedInv.getStockQuantity().compareTo(BigDecimal.valueOf(DeliveryConstants.LOW_STOCK_THRESHOLD)) <= 0) {
                     lowStockInventories.add(lockedInv);
                 }
@@ -302,51 +750,321 @@ public class OrderService {
 
             order.advanceStateTo(OrderStatus.PENDING_WAREHOUSE);
             orderRepo.save(order);
-            
-            // Prevent LazyInitializationException outside the transaction boundary
-            order.getCustomer().getWhatsappNumber();
 
-            return new CheckoutResult(order, lowStockInventories);
+            Customer customer = order.getCustomer();
+            boolean locationPromptNeeded = (order.getDeliveryLatitude() == null);
+            Double savedLat = (customer != null) ? customer.getLatitude() : null;
+            Double savedLng = (customer != null) ? customer.getLongitude() : null;
+            boolean hasSavedLocation = (savedLat != null && savedLng != null);
+
+            // Force initialization of lazy fields inside transaction
+            if (customer != null) {
+                customer.getWhatsappNumber();
+                customer.getRecipientId();
+            }
+
+            return new CheckoutResult(order, lowStockInventories, locationPromptNeeded, hasSavedLocation, savedLat, savedLng, checkoutInstant);
         });
 
         if (result == null) {
             return;
         }
 
-        // Network calls safely execute OUTSIDE the database transaction
-        for (com.localcommerce.delivery.model.Inventory inventory : result.lowStockInventories) {
-            warehouseAlertService.sendLowStockAlert(inventory);
+        // Post-commit: external WhatsApp notifications
+        try {
+            for (com.localcommerce.delivery.model.Inventory inventory : result.lowStockInventories) {
+                warehouseAlertService.sendLowStockAlert(inventory);
+            }
+            warehouseAlertService.sendNewOrderAlert(result.order);
+
+            Customer customer = result.order.getCustomer();
+            String recipientId = (customer != null) ? customer.getRecipientId() : null;
+
+            if (recipientId != null) {
+                if (result.locationPromptNeeded) {
+                    outboundClient.sendCombinedOrderConfirmationPrompt(
+                            recipientId,
+                            result.order.getId(),
+                            result.hasSavedLocation,
+                            result.savedLat,
+                            result.savedLng,
+                            result.checkoutInstant
+                    );
+                } else {
+                    outboundClient.sendOrderConfirmedConcise(recipientId, result.checkoutInstant);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to deliver post-commit checkout notifications for order {}: {}", orderId, e.getMessage());
         }
-        warehouseAlertService.sendNewOrderAlert(result.order);
     }
 
-    @Transactional
-    public void completeDelivery(Long orderId) {
-        CustomerOrder order = orderRepo.findById(orderId)
-                .orElseThrow(() -> new EntityNotFoundException("Order not found"));
+    @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
+    public CancellationResult editOrder(Long orderId) {
+        CancellationResult result = transactionTemplate.execute(status -> {
+            java.util.Optional<CustomerOrder> orderOpt = orderRepo.findByIdForUpdate(orderId);
+            if (orderOpt.isEmpty()) {
+                log.warn("Attempted to edit non-existent order: {}", orderId);
+                return CancellationResult.notFound(orderId, CancellationActor.CUSTOMER);
+            }
+            CustomerOrder order = orderOpt.get();
 
-        order.advanceStateTo(OrderStatus.DELIVERED);
-        order.setDeliveredAt(LocalDateTime.now());
-        orderRepo.save(order);
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                return CancellationResult.alreadyDelivered(order, CancellationActor.CUSTOMER);
+            }
 
-        DeliveryRun run = order.getDeliveryRun();
-        if (run != null) {
-            boolean hasUndeliveredOrders = orderRepo.existsByDeliveryRunIdAndStatusNot(
-                    run.getId(), OrderStatus.DELIVERED
-            );
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                return CancellationResult.alreadyCancelled(order, CancellationActor.CUSTOMER);
+            }
 
-            if (!hasUndeliveredOrders) {
-                run.setStatus(DeliveryRun.RunStatus.COMPLETED);
-                deliveryRepo.save(run);
-                log.info("Delivery run {} has been completed. All orders are delivered.", run.getId());
-            } else {
-                log.info("Delivery run {} remains IN_PROGRESS after order {} was delivered", run.getId(), order.getId());
+            if (order.getStatus() != OrderStatus.CREATED) {
+                log.warn("Customer attempted to edit order {} in state {}", orderId, order.getStatus());
+                return CancellationResult.notAllowed(
+                        "This order is already being prepared or out for delivery and can no longer be edited.",
+                        order,
+                        CancellationActor.CUSTOMER
+                );
+            }
+
+            // Cancel the original CREATED order internally without modifying inventory
+            order.advanceStateTo(OrderStatus.CANCELLED);
+            order.setCancellationReason("Customer Edited Order");
+            orderRepo.save(order);
+
+            Customer customer = order.getCustomer();
+            if (customer != null) {
+                customer.getRecipientId();
+            }
+
+            return CancellationResult.success(order, CancellationActor.CUSTOMER, "Customer Edited Order");
+        });
+
+        if (result != null && result.isSuccess()) {
+            try {
+                CustomerOrder order = result.order();
+                Customer customer = (order != null) ? order.getCustomer() : null;
+                String recipientId = (customer != null) ? customer.getRecipientId() : null;
+                if (recipientId != null) {
+                    outboundClient.sendEditOrderPrompt(recipientId);
+                }
+            } catch (Exception e) {
+                log.error("Failed to send edit order prompt for order {}: {}", orderId, e.getMessage());
             }
         }
 
-        // FIX 4: Use customer.getRecipientId() for delivery alerts
-        outboundClient.sendDeliveredAlert(order.getCustomer().getRecipientId());
+        return result;
+    }
 
-        log.info("Order {} has been successfully closed out by the rider.", order.getDisplayId());
+    @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
+    public CancellationResult cancelOrder(Long orderId, String reason, CancellationActor actor) {
+        CancellationResult result = transactionTemplate.execute(status -> {
+            // Level 1 Lock: CustomerOrder
+            java.util.Optional<CustomerOrder> orderOpt = orderRepo.findByIdForUpdate(orderId);
+            if (orderOpt.isEmpty()) {
+                log.warn("Attempted to cancel non-existent order: {}", orderId);
+                return CancellationResult.notFound(orderId, actor);
+            }
+            CustomerOrder order = orderOpt.get();
+
+            // Terminal guard: DELIVERED orders cannot be cancelled
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                log.warn("Attempted to cancel delivered order {} by actor {}", orderId, actor);
+                return CancellationResult.alreadyDelivered(order, actor);
+            }
+
+            // Idempotency: If already cancelled, return early without error
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                log.info("Order {} is already CANCELLED. No-op for actor {}", orderId, actor);
+                return CancellationResult.alreadyCancelled(order, actor);
+            }
+
+            OrderStatus preStatus = order.getStatus();
+
+            // Validate actor eligibility
+            switch (actor) {
+                case CUSTOMER -> {
+                    if (preStatus != OrderStatus.CREATED) {
+                        log.warn("Customer attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("This order is already being prepared or out for delivery and can no longer be cancelled.", order, actor);
+                    }
+                }
+                case WAREHOUSE -> {
+                    if (preStatus != OrderStatus.PENDING_WAREHOUSE && preStatus != OrderStatus.PACKING) {
+                        log.warn("Warehouse attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("The order can no longer be cancelled at this stage.", order, actor);
+                    }
+                }
+                case RIDER -> {
+                    if (preStatus != OrderStatus.DISPATCHED) {
+                        log.warn("Rider attempted to cancel order {} in state {}", orderId, preStatus);
+                        return CancellationResult.notAllowed("The order can no longer be cancelled at this stage.", order, actor);
+                    }
+                }
+                case ADMIN -> {
+                    // Admin can cancel any active non-terminal order
+                }
+            }
+
+            // Inventory restoration if order was confirmed (stock was deducted)
+            boolean stockWasDeducted = (preStatus != OrderStatus.CREATED);
+            if (stockWasDeducted) {
+                java.util.Map<Long, BigDecimal> inventoryRestorationMap = new java.util.HashMap<>();
+                boolean anyDiscrepancy = false;
+
+                for (OrderItem item : order.getItems()) {
+                    Product product = item.getProduct();
+                    com.localcommerce.delivery.model.Inventory inv = (product != null) ? product.getInventory() : null;
+                    if (inv == null) continue;
+
+                    BigDecimal qtyToRestore = item.getDeductedQuantity();
+                    if (qtyToRestore != null) {
+                        inventoryRestorationMap.merge(inv.getId(), qtyToRestore, BigDecimal::add);
+                    } else {
+                        // Legacy item missing snapshot: do NOT guess, flag reconciliation required
+                        anyDiscrepancy = true;
+                        item.setStockReconciliationRequired(true);
+                        log.warn("OrderItem {} in Order {} missing deductedQuantity snapshot. Stock reconciliation required.",
+                                item.getId(), orderId);
+                    }
+                }
+
+                if (anyDiscrepancy) {
+                    order.setStockReconciled(false);
+                }
+
+                // Level 2 Locks: Sort inventories by ID ASC to strictly prevent deadlocks
+                List<Long> sortedInvIds = inventoryRestorationMap.keySet().stream()
+                        .sorted()
+                        .toList();
+
+                for (Long invId : sortedInvIds) {
+                    com.localcommerce.delivery.model.Inventory lockedInv = inventoryRepo.findByIdForUpdate(invId)
+                            .orElseThrow(() -> new IllegalStateException("Inventory not found: " + invId));
+                    BigDecimal qtyToRestore = inventoryRestorationMap.get(invId);
+                    lockedInv.setStockQuantity(lockedInv.getStockQuantity().add(qtyToRestore));
+                    inventoryRepo.save(lockedInv);
+                    log.info("Restored {} {} to inventory {} for cancelled order {}",
+                            qtyToRestore, lockedInv.getUnit(), invId, order.getDisplayId());
+                }
+            }
+
+            // Advance state to CANCELLED and persist reason
+            order.advanceStateTo(OrderStatus.CANCELLED);
+            String finalReason = reason;
+            if (!order.isStockReconciled()) {
+                finalReason = (reason != null ? reason + " " : "") + "[STOCK RECONCILIATION REQUIRED - Missing snapshot]";
+            }
+            order.setCancellationReason(finalReason);
+            orderRepo.save(order);
+
+            // Level 3 Lock: Check delivery run completion if applicable
+            DeliveryRun run = order.getDeliveryRun();
+            if (run != null) {
+                DeliveryRun lockedRun = deliveryRepo.findByIdForUpdate(run.getId()).orElse(run);
+                boolean hasActiveOrders = orderRepo.existsByDeliveryRunIdAndStatusNotIn(
+                        lockedRun.getId(), List.of(OrderStatus.DELIVERED, OrderStatus.CANCELLED)
+                );
+                if (!hasActiveOrders) {
+                    lockedRun.setStatus(DeliveryRun.RunStatus.COMPLETED);
+                    deliveryRepo.save(lockedRun);
+                    log.info("Delivery run {} completed after order {} was cancelled.", lockedRun.getId(), order.getDisplayId());
+                }
+            }
+
+            Customer customer = order.getCustomer();
+            if (customer != null) {
+                customer.getRecipientId();
+                customer.getWhatsappNumber();
+            }
+
+            return CancellationResult.success(order, actor, finalReason);
+        });
+
+        if (result == null || !result.isSuccess()) {
+            return result;
+        }
+
+        // Post-commit: Best-effort notifications on SUCCESS
+        try {
+            CustomerOrder order = result.order();
+            Customer customer = (order != null) ? order.getCustomer() : null;
+            String recipientId = (customer != null) ? customer.getRecipientId() : null;
+            String phone = (customer != null) ? customer.getWhatsappNumber() : null;
+
+            if (result.actor() == CancellationActor.CUSTOMER) {
+                if (recipientId != null) {
+                    outboundClient.sendTextUpdate(recipientId, WhatsAppConstants.ORDER_CANCELLED_CUSTOMER);
+                }
+            } else if (result.actor() == CancellationActor.WAREHOUSE) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone, WhatsAppConstants.STOCK_ISSUE_CANCELLATION);
+                }
+            } else if (result.actor() == CancellationActor.RIDER) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone,
+                            "Your order #" + order.getDisplayId() + " could not be delivered and has been cancelled. Reason: " + result.reason());
+                }
+            } else if (result.actor() == CancellationActor.ADMIN) {
+                if (phone != null) {
+                    outboundClient.sendTextUpdate(phone,
+                            "Your order #" + order.getDisplayId() + " was cancelled by support. Reason: " + result.reason());
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to deliver post-commit cancellation alert for order {}: {}", orderId, e.getMessage());
+        }
+
+        return result;
+    }
+
+    @jakarta.transaction.Transactional(jakarta.transaction.Transactional.TxType.NOT_SUPPORTED)
+    public void completeDelivery(Long orderId) {
+        CustomerOrder completedOrder = transactionTemplate.execute(status -> {
+            // Level 1 Lock: CustomerOrder
+            CustomerOrder order = orderRepo.findByIdForUpdate(orderId)
+                    .orElseThrow(() -> new EntityNotFoundException("Order not found: " + orderId));
+
+            if (order.getStatus() == OrderStatus.DELIVERED) {
+                log.info("Order {} is already DELIVERED. No-op.", orderId);
+                return null;
+            }
+            if (order.getStatus() == OrderStatus.CANCELLED) {
+                log.warn("Cannot mark cancelled order {} as delivered.", orderId);
+                return null;
+            }
+
+            order.advanceStateTo(OrderStatus.DELIVERED);
+            order.setDeliveredAt(LocalDateTime.now());
+            orderRepo.save(order);
+
+            // Level 3 Lock: DeliveryRun completion check
+            DeliveryRun run = order.getDeliveryRun();
+            if (run != null) {
+                DeliveryRun lockedRun = deliveryRepo.findByIdForUpdate(run.getId()).orElse(run);
+                boolean hasUndeliveredOrders = orderRepo.existsByDeliveryRunIdAndStatusNotIn(
+                        lockedRun.getId(), List.of(OrderStatus.DELIVERED, OrderStatus.CANCELLED)
+                );
+
+                if (!hasUndeliveredOrders) {
+                    lockedRun.setStatus(DeliveryRun.RunStatus.COMPLETED);
+                    deliveryRepo.save(lockedRun);
+                    log.info("Delivery run {} has been completed. All orders are delivered or cancelled.", lockedRun.getId());
+                } else {
+                    log.info("Delivery run {} remains IN_PROGRESS after order {} was delivered", lockedRun.getId(), order.getId());
+                }
+            }
+
+            order.getCustomer().getRecipientId(); // Force initialization
+            return order;
+        });
+
+        if (completedOrder != null) {
+            try {
+                outboundClient.sendDeliveredAlert(completedOrder.getCustomer().getRecipientId());
+            } catch (Exception e) {
+                log.error("Failed to send delivered alert for order {}: {}", orderId, e.getMessage());
+            }
+            log.info("Order {} has been successfully closed out by the rider.", completedOrder.getDisplayId());
+        }
     }
 }

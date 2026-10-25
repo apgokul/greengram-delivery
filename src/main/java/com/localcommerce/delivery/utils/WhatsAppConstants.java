@@ -15,7 +15,15 @@ public class WhatsAppConstants {
     // Customer interaction button prefixes
     public static final String REUSE_LOCATION = "REUSE_LOC_";
     public static final String NEW_LOCATION = "NEW_LOC_";
+    public static final String CONFIRM_ORDER = "CONFIRM_";
+    public static final String EDIT_ORDER = "EDIT_ORDER_";
+    public static final String CANCEL_ORDER = "CANCEL_ORDER_";
+    public static final String SETLOC_PREFIX = "SETLOC_";
+    public static final String SETLOC_ALL_PREFIX = "SETLOC_ALL_";
 
+    // Rider action button prefixes
+    public static final String RIDER_CANCEL = "RCANCEL_";
+    public static final String RIDER_CANCEL_REASON = "RCANCEL_REASON_";
 
     // Warehouse action button prefixes
     public static final String ACCEPT_ORDER = "ACCEPT_";
@@ -23,6 +31,9 @@ public class WhatsAppConstants {
     public static final String STOCK_ISSUE = "STOCK_ISSUE_";
     public static final String SET_DELIVERED = "DELIVERED_";
     public static final String VIEW_ORDER = "VIEW_ORDER_";
+
+    // Location badge
+    public static final String LOCATION_REQUIRED_BADGE = "⚠️ LOCATION REQUIRED";
 
     // ==================== Payload Keys ====================
     // Messaging product type
@@ -65,18 +76,52 @@ public class WhatsAppConstants {
     // Location confirmation prompt
     public static final String REUSE_LOCATION_PROMPT =
             "🛒 We have your cart!\n\nShould we deliver to your saved default location?\n\n📍 %s";
-    public static final String REUSE_LOCATION_YES_BUTTON = "✅ Yes, deliver here";
-    public static final String REUSE_LOCATION_NEW_BUTTON = "📍 Send new location";
+    public static final String REUSE_LOCATION_YES_BUTTON = "📍 Use Saved Location";
+    public static final String REUSE_LOCATION_NEW_BUTTON = "📌 Share New Location";
+
+    // Cutoff time and delivery promises
+    public static final java.time.LocalTime EVENING_CUTOFF_TIME = java.time.LocalTime.of(18, 30);
+    public static final String DELIVERY_PROMISE_TODAY = "today evening";
+    public static final String DELIVERY_PROMISE_TOMORROW = "tomorrow evening";
+
+    public static String getDeliveryPromise(java.time.LocalTime time) {
+        if (time == null) {
+            throw new IllegalArgumentException("Time must not be null to determine delivery promise");
+        }
+        return time.isBefore(EVENING_CUTOFF_TIME) ? DELIVERY_PROMISE_TODAY : DELIVERY_PROMISE_TOMORROW;
+    }
+
+    // Combined order confirmation and location request templates
+    public static final String ORDER_CONFIRMED_ALREADY_HAS_LOCATION =
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*";
+
+    public static final String ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT =
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\n*Your saved location:*\n%s";
+
+    public static final String ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT =
+            "🎉 *Your order is confirmed!*\n\n🛵 *Your order will be delivered by %s.*\n\n📍 *Where should we deliver?*\n\nPlease share your current location so we can deliver your order to the right place:\n\n📎 Tap the attachment icon\n📍 Select *Location*\n📤 Tap *Send your current location*";
+
+    public static final String SAVED_LOCATION_STANDALONE_PROMPT =
+            "*Your delivery location*\n\nUse your saved location or share a new one so we can deliver your order to the right place.\n\nSaved location:\n%s";
+
+    public static final String EDIT_ORDER_PROMPT =
+            "*Let's update your order 🛒*\n\nNo problem! Update your cart, and send us your new order.";
+
+    public static final String LOCATION_CONFIRMED_NATURAL =
+            "Your delivery location has been saved. We'll deliver your order to this location. Thank you!";
+
+
+    public static final String ORDER_CANCELLED_CUSTOMER = "Your order has been cancelled.";
 
     // Location request prompt
     public static final String LOCATION_REQUEST_PROMPT =
             "📍 *WHERE SHOULD WE DELIVER?*\n\n"
-                    + "Your cart is ready! 🛒\n\n"
-                    + "*Please send us your current location:*\n\n"
+                    + "Please share your location so we can deliver your order. ❤\uFE0F\n\n"
+                    + "_How to share:_\n\n"
                     + "📎 Tap the attachment icon\n"
                     + "📍 Select *Location*\n"
-                    + "📤 Tap *Send your current location*\n\n"
-                    + "This helps us deliver your order to the correct address. ❤️";
+                    + "📤 Tap *Send your current location*";
+
 
     // Order status alerts
     public static final String ORDER_PACKING_ALERT =
@@ -89,13 +134,13 @@ public class WhatsAppConstants {
                     "We'll notify you as soon as it's *out for delivery.*\n";
 
     public static final String OUT_FOR_DELIVERY_ALERT_TEMPLATE =
-            "🛵 *Out for Delivery!*\n\nOur rider, is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
+            "🛵 *Out for Delivery!*\n\nOur rider is on the way with your order. \n⏱️ ETA: %s mins.\n\n📞 Need to reach them? Call: %s";
 
     public static final String DELIVERED_ALERT =
             "📦 *Order delivered!*\n\n" +
-                    "We hope you enjoy your groceries!\n\n" +
+                    "Thank you for choosing *GreenGram*.\n\n" +
                     "If you have any questions or need help with your order, we're just a call away.\n\n" +
-                    "Thank you for choosing *GreenGram*. See you again soon! 😊";
+                    "See you again soon! 😊";
 
     public static final String CONFIRM_CHECKOUT = "CHECKOUT_";
 
@@ -156,15 +201,15 @@ public class WhatsAppConstants {
     public static final String ORDER_SUMMARY =
             """
             🧾 *Order Invoice*
-            
+            Order ID: #%s
+
             *Items:*
             %s
-            
+
             ---------------------------
             💰 *Grand Total: ₹%s*
-            
-            Tap below to confirm your order!""";
 
+            Tap below to confirm your order!""";
 }
 
 

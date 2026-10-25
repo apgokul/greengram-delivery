@@ -25,14 +25,14 @@ public class InventoryAuditLog {
     @Column(nullable = false)
     private String sku;
 
-    @Column(nullable = false)
-    private Integer oldStock;
+    @Column(nullable = false, precision = 38, scale = 3)
+    private java.math.BigDecimal oldStock;
 
-    @Column(nullable = false)
-    private Integer newStock;
+    @Column(nullable = false, precision = 38, scale = 3)
+    private java.math.BigDecimal newStock;
 
-    @Column(nullable = false)
-    private Integer changeAmount;
+    @Column(nullable = false, precision = 38, scale = 3)
+    private java.math.BigDecimal changeAmount;
 
     @Column(nullable = false)
     private String reason; // e.g., "RESTOCK", "MANUAL_CORRECTION", "SPOILED"

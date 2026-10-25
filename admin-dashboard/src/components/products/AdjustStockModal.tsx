@@ -41,13 +41,11 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
             return;
         }
 
-        const adjustmentAmount = operation === 'ADD' ? quantity : -quantity;
-        const currentStock = product.inventory.stockQuantity || 0;
-        const newStock = currentStock + adjustmentAmount;
+        const delta = operation === 'ADD' ? quantity : -quantity;
 
         setLoading(true);
         try {
-            await productsApi.adjustStock(product.inventory.id, newStock);
+            await productsApi.adjustStock(product.inventory.id, delta, reason.trim() || undefined);
             onSuccess();
             onClose();
         } catch (err: any) {
@@ -67,7 +65,7 @@ export const AdjustStockModal: React.FC<AdjustStockModalProps> = ({ isOpen, onCl
 
                     <div className="input-group">
                         <label className="input-label">Current Stock</label>
-                        <div className="input-field" style={{ backgroundColor: 'rgba(0,0,0,0.2)' }}>
+                        <div className="input-field input-field-readonly">
                             {product.inventory?.stockQuantity ?? 0} {product.inventory?.unit}
                         </div>
                     </div>

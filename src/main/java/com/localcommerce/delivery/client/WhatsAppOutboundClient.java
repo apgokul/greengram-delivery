@@ -20,14 +20,15 @@ import com.localcommerce.delivery.model.OrderItem;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WhatsAppOutboundClient {
 
@@ -40,17 +41,37 @@ public class WhatsAppOutboundClient {
     @Value("${warehouse.phone.number}")
     private String warehousePhoneNumber;
 
-
-
     private final RestTemplate restTemplate;
     private final SmsFallbackService smsFallbackService;
     private final com.localcommerce.delivery.service.WhatsAppLoggingService loggingService;
+    private final WhatsAppHttpSender httpSender;
     private Clock clock = Clock.system(WhatsAppConstants.ASIA_KOLKATA_ZONE);
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WhatsAppOutboundClient(RestTemplate restTemplate,
+                                  SmsFallbackService smsFallbackService,
+                                  com.localcommerce.delivery.service.WhatsAppLoggingService loggingService,
+                                  WhatsAppHttpSender httpSender) {
+        this.restTemplate = restTemplate;
+        this.smsFallbackService = smsFallbackService;
+        this.loggingService = loggingService;
+        this.httpSender = httpSender;
+    }
+
+    public WhatsAppOutboundClient(RestTemplate restTemplate,
+                                  SmsFallbackService smsFallbackService,
+                                  com.localcommerce.delivery.service.WhatsAppLoggingService loggingService) {
+        this(restTemplate, smsFallbackService, loggingService,
+                new WhatsAppHttpSender(restTemplate, smsFallbackService, loggingService));
+    }
 
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     public void setClock(Clock clock) {
         if (clock != null) {
             this.clock = clock;
+            if (this.httpSender != null) {
+                this.httpSender.setClock(clock);
+            }
         }
     }
 
@@ -154,31 +175,22 @@ public class WhatsAppOutboundClient {
         sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
-    // Helper method to execute the HTTP call
-    @Retryable(
-            retryFor = {RestClientException.class},
-            backoff = @Backoff(delay = 2000) // Wait 2 seconds between tries
-    )
-    private void sendPostRequest(String toPhoneNumber, String loggedDescription, Map<String, Object> payload) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(accessToken);
-
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
-        // --- TEMPORARY MUTE FOR LOCAL TESTING ---
-        org.springframework.http.ResponseEntity<String> response = restTemplate.postForEntity(apiUrl, request, String.class);
-
-        log.info("Successfully sent payload to Meta API.");
-
-        // Safe outbound logging hook:
-        // ONLY executes if postForEntity returned without throwing RestClientException.
-        // Persistence failure is caught here so it never propagates into @Retryable or the caller's business transaction.
-        if (response != null && (response.getStatusCode().is2xxSuccessful() || response.getStatusCode().value() == 200)) {
-            try {
-                loggingService.logOutbound(toPhoneNumber, loggedDescription, LocalDateTime.now(clock));
-            } catch (Exception e) {
-                log.error("Failed to persist outbound WhatsApp message log for phone {}: {}", toPhoneNumber, e.getMessage());
+    // Helper method to execute the HTTP call via Spring-managed retry proxy
+    void sendPostRequest(String toPhoneNumber, String loggedDescription, Map<String, Object> payload) {
+        if (httpSender != null) {
+            if (httpSender.getApiUrl() == null && this.apiUrl != null) {
+                httpSender.setApiUrl(this.apiUrl);
             }
+            if (httpSender.getAccessToken() == null && this.accessToken != null) {
+                httpSender.setAccessToken(this.accessToken);
+            }
+            if (httpSender.getWarehousePhoneNumber() == null && this.warehousePhoneNumber != null) {
+                httpSender.setWarehousePhoneNumber(this.warehousePhoneNumber);
+            }
+            if (this.clock != null) {
+                httpSender.setClock(this.clock);
+            }
+            httpSender.sendPostRequest(toPhoneNumber, loggedDescription, payload);
         }
     }
 
@@ -218,15 +230,29 @@ public class WhatsAppOutboundClient {
                                         Map.of(
                                                 "type", WhatsAppConstants.MESSAGE_TYPE_REPLY,
                                                 "reply", Map.of(
-                                                        "id", WhatsAppConstants.CONFIRM_CHECKOUT + order.getId(),
+                                                        "id", WhatsAppConstants.CONFIRM_ORDER + order.getId(),
                                                         "title", "✅ Confirm Order"
                                                 )
-                                        )
+                                        ),
+                                        Map.of(
+                                                "type", WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                "reply", Map.of(
+                                                        "id", WhatsAppConstants.EDIT_ORDER + order.getId(),
+                                                        "title", "✏️ Edit Order"
+                                                )
+                                        ),
+                                        Map.of(
+                                                "type", WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                "reply", Map.of(
+                                                        "id", WhatsAppConstants.CANCEL_ORDER + order.getId(),
+                                                        "title", "❌ Cancel Order"
+                                                )
+                                       )
                                 }
                         )
                 )
         );
-        String loggedDescription = bodyText + "\n[Button: ✅ Confirm Order]";
+        String loggedDescription = bodyText + "\n[Buttons: 1. Confirm Order | 2. Edit Order | 3. Cancel Order]";
         sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
@@ -253,8 +279,14 @@ public class WhatsAppOutboundClient {
 
         String formattedGrandTotal = String.format(Locale.ROOT, "%.2f", grandTotal);
 
+        // Guard against Meta 1024 char limit: truncate items if total body exceeds safe threshold
+        if (itemList.length() > 700) {
+            itemList = itemList.substring(0, 670) + "\n... (items truncated)";
+        }
+
         return String.format(
                 WhatsAppConstants.ORDER_SUMMARY,
+                order.getId() != null ? order.getId() : "",
                 itemList, formattedGrandTotal
         );
     }
@@ -278,7 +310,7 @@ public class WhatsAppOutboundClient {
                                     ? item.getProduct().getCurrentPrice()
                                     : BigDecimal.ZERO);
                     BigDecimal lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
-                    return String.format(Locale.ROOT, "%d x %s: ₹%.2f", quantity, productName, lineTotal);
+                    return String.format(Locale.ROOT, "%dx %s: ₹%.2f", quantity, productName, lineTotal);
                 })
                 .collect(Collectors.joining("\n"));
     }
@@ -326,58 +358,46 @@ public class WhatsAppOutboundClient {
         sendPostRequest(toPhoneNumber, loggedDescription, body);
     }
 
-    @Recover
     public void handleMetaApiFailure(RestClientException e, Map<String, Object> payload) {
-        log.error("CRITICAL: Meta API completely unreachable after retries. Error: {}", e.getMessage());
-
-        //      1. Extract the intended recipient
-        String intendedRecipient = (String) payload.getOrDefault(WhatsAppConstants.TO, "Unknown");
-        log.error("Meta API completely unreachable. Failed to deliver message to: {}", intendedRecipient);
-
-        if (intendedRecipient.equals(warehousePhoneNumber)) {
-            // SCENARIO A: The warehouse didn't get the alert! This is an operational emergency.
-            String alertMessage = "🚨 URGENT: WhatsApp API is DOWN. " +
-                    "A new order was just placed but the warehouse bot is offline. " +
-                    "Please check the backend database immediately to pack the order!";
-
-            smsFallbackService.sendEmergencyAlert(alertMessage);
-        }
-        else {
-            // SCENARIO B: A customer update failed (e.g., "Out for delivery" alert dropped).
-            // We usually don't want to pay to SMS customers for every minor status update.
-            // Instead, we log it with a specific searchable tag so customer support knows
-            // why the user might call complaining about a lack of updates.
-            log.warn("[CUSTOMER_COMM_DROP] Failed to send WhatsApp update to customer {}. " +
-                    "Payload dump: {}", intendedRecipient, payload);
+        if (httpSender != null) {
+            String toPhoneNumber = payload != null ? (String) payload.get(WhatsAppConstants.TO) : null;
+            httpSender.handleMetaApiFailure(e, toPhoneNumber, null, payload);
         }
     }
 
     // Inside com.localcommerce.delivery.client.WhatsAppOutboundClient
 
     public void sendRiderDeliveryCard(String riderPhoneNumber, CustomerOrder order) {
-        String googleMapsLink = String.format(
-                "https://www.google.com/maps?q=%s,%s",
-                order.getDeliveryLatitude(),
-                order.getDeliveryLongitude()
-        );
-        String totalAmount = order.getTotalAmount().toString();
+        String addressText;
+        if (order.getDeliveryLatitude() != null && order.getDeliveryLongitude() != null) {
+            addressText = String.format(Locale.ROOT, "https://www.google.com/maps?q=%s,%s",
+                    order.getDeliveryLatitude(),
+                    order.getDeliveryLongitude());
+        } else {
+            addressText = "⚠️ LOCATION REQUIRED (Contact customer)";
+        }
+        String totalAmount = order.getTotalAmount() != null ? order.getTotalAmount().toString() : "0.00";
+        String customerName = (order.getCustomer() != null && order.getCustomer().getName() != null)
+                ? order.getCustomer().getName() : "Customer";
+        String customerPhone = (order.getCustomer() != null && order.getCustomer().getWhatsappNumber() != null)
+                ? order.getCustomer().getWhatsappNumber() : "Unknown";
 
         String bodyText = String.format(
                 """
                         📦 *ORDER DISPATCH*
-                        
+
                         • *ID:* %s
                         • *Customer:* %s
                         • *Phone:* %s
                         • *Collect Cash:* ₹%s
                         • *Address:* %s
-                        
-                        Tap below ONLY when you have handed this bag to the customer.""",
-                order.getDisplayId(), 
-                order.getCustomer().getName(),
-                order.getCustomer().getWhatsappNumber(),
-                totalAmount, 
-                googleMapsLink
+
+                        Tap below to mark delivered or cancel delivery.""",
+                order.getDisplayId(),
+                customerName,
+                customerPhone,
+                totalAmount,
+                addressText
         );
 
         Map<String, Object> body = Map.of(
@@ -392,9 +412,15 @@ public class WhatsAppOutboundClient {
                                         Map.of(
                                                 WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
                                                 WhatsAppConstants.REPLY, Map.of(
-                                                        // E.g., "DELIVERED_1042"
                                                         WhatsAppConstants.ID, WhatsAppConstants.SET_DELIVERED + order.getId(),
-                                                        WhatsAppConstants.TITLE, "✅ Marked Delivered"
+                                                        WhatsAppConstants.TITLE, "✅ Delivered"
+                                                )
+                                        ),
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.RIDER_CANCEL + order.getId(),
+                                                        WhatsAppConstants.TITLE, "❌ Cancel"
                                                 )
                                         )
                                 }
@@ -402,11 +428,276 @@ public class WhatsAppOutboundClient {
                 )
         );
 
-        String loggedDescription = bodyText + "\n[Button: ✅ Marked Delivered]";
+        String loggedDescription = bodyText + "\n[Buttons: 1. ✅ Delivered | 2. ❌ Cancel]";
         sendPostRequest(riderPhoneNumber, loggedDescription, body);
     }
 
+    public void sendRiderCancellationReasonsPrompt(String riderPhoneNumber, Long orderId) {
+        String bodyText = "Select a cancellation reason for Order #" + orderId + ":";
+        Map<String, Object> body = Map.of(
+                WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                WhatsAppConstants.TO, riderPhoneNumber,
+                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                WhatsAppConstants.INTERACTIVE, Map.of(
+                        WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
+                        WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                        WhatsAppConstants.ACTION, Map.of(
+                                WhatsAppConstants.BUTTONS, new Object[]{
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.RIDER_CANCEL_REASON + "UNREACHABLE_" + orderId,
+                                                        WhatsAppConstants.TITLE, "📞 Unreachable"
+                                                )
+                                        ),
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.RIDER_CANCEL_REASON + "WRONG_ADDR_" + orderId,
+                                                        WhatsAppConstants.TITLE, "📍 Wrong Address"
+                                                )
+                                        ),
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.RIDER_CANCEL_REASON + "REJECTED_" + orderId,
+                                                        WhatsAppConstants.TITLE, "🚫 Refused"
+                                                )
+                                        )
+                                }
+                        )
+                )
+        );
+        sendPostRequest(riderPhoneNumber, bodyText + "\n[Reasons: Unreachable | Wrong Address | Refused]", body);
+    }
+
+    public void sendDeliveryLocationPrompt(String toPhoneNumber) {
+        Map<String, Object> body = Map.of(
+                WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                WhatsAppConstants.TO, toPhoneNumber,
+                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_TEXT,
+                WhatsAppConstants.TEXT, Map.of(WhatsAppConstants.BODY, WhatsAppConstants.LOCATION_REQUEST_PROMPT)
+        );
+        sendPostRequest(toPhoneNumber, WhatsAppConstants.LOCATION_REQUEST_PROMPT, body);
+    }
+
+    public void sendSavedLocationPrompt(String toPhoneNumber, Long orderId, Double lat, Double lng) {
+        if (lat == null || lng == null) {
+            sendDeliveryLocationPrompt(toPhoneNumber);
+            return;
+        }
+
+        String mapsUrl = String.format(Locale.ROOT, "https://www.google.com/maps?q=%.6f,%.6f", lat, lng);
+        String promptText = String.format(WhatsAppConstants.SAVED_LOCATION_STANDALONE_PROMPT, mapsUrl);
+
+        Map<String, Object> body = Map.of(
+                WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                WhatsAppConstants.TO, toPhoneNumber,
+                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                WhatsAppConstants.INTERACTIVE, Map.of(
+                        WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
+                        WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, promptText),
+                        WhatsAppConstants.ACTION, Map.of(
+                                WhatsAppConstants.BUTTONS, new Object[]{
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.REUSE_LOCATION + orderId,
+                                                        WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_YES_BUTTON
+                                                )
+                                        ),
+                                        Map.of(
+                                                WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                WhatsAppConstants.REPLY, Map.of(
+                                                        WhatsAppConstants.ID, WhatsAppConstants.NEW_LOCATION + orderId,
+                                                        WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON
+                                                )
+                                        )
+                                }
+                        )
+                )
+        );
+        sendPostRequest(toPhoneNumber, promptText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]", body);
+    }
+
+    public void sendSavedLocationPrompt(String toPhoneNumber, Long orderId) {
+        sendSavedLocationPrompt(toPhoneNumber, orderId, null, null);
+    }
+
+    public String resolveDeliveryPromise(Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            throw new IllegalArgumentException("checkoutInstant must not be null to resolve delivery promise");
+        }
+        LocalTime time = checkoutInstant.atZone(WhatsAppConstants.ASIA_KOLKATA_ZONE).toLocalTime();
+        return WhatsAppConstants.getDeliveryPromise(time);
+    }
+
+    public void sendCombinedOrderConfirmationPrompt(String toPhoneNumber, Long orderId, boolean hasSavedLocation, Double lat, Double lng) {
+        sendCombinedOrderConfirmationPrompt(toPhoneNumber, orderId, hasSavedLocation, lat, lng, null);
+    }
+
+    public void sendCombinedOrderConfirmationPrompt(String toPhoneNumber, Long orderId, boolean hasSavedLocation, Double lat, Double lng, Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            log.error("Missing required checkout timestamp for order {}. Refusing to send delivery confirmation.", orderId);
+            return;
+        }
+
+        String deliveryPromise = resolveDeliveryPromise(checkoutInstant);
+
+        if (hasSavedLocation && lat != null && lng != null) {
+            String mapsUrl = String.format(Locale.ROOT, "https://www.google.com/maps?q=%.6f,%.6f", lat, lng);
+            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_WITH_SAVED_LOCATION_PROMPT, deliveryPromise, mapsUrl);
+            Map<String, Object> body = Map.of(
+                    WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                    WhatsAppConstants.TO, toPhoneNumber,
+                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                    WhatsAppConstants.INTERACTIVE, Map.of(
+                            WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
+                            WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                            WhatsAppConstants.ACTION, Map.of(
+                                    WhatsAppConstants.BUTTONS, new Object[]{
+                                            Map.of(
+                                                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                    WhatsAppConstants.REPLY, Map.of(
+                                                            WhatsAppConstants.ID, WhatsAppConstants.REUSE_LOCATION + orderId,
+                                                            WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_YES_BUTTON
+                                                    )
+                                            ),
+                                            Map.of(
+                                                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                                                    WhatsAppConstants.REPLY, Map.of(
+                                                            WhatsAppConstants.ID, WhatsAppConstants.NEW_LOCATION + orderId,
+                                                            WhatsAppConstants.TITLE, WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON
+                                                    )
+                                            )
+                                    }
+                            )
+                    )
+            );
+            sendPostRequest(toPhoneNumber, bodyText + "\n[Buttons: 1. " + WhatsAppConstants.REUSE_LOCATION_YES_BUTTON + " | 2. " + WhatsAppConstants.REUSE_LOCATION_NEW_BUTTON + "]", body);
+        } else {
+            String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_NEED_NEW_LOCATION_PROMPT, deliveryPromise);
+            sendTextUpdate(toPhoneNumber, bodyText);
+        }
+    }
+
+    public void sendOrderConfirmedConcise(String toPhoneNumber) {
+        sendOrderConfirmedConcise(toPhoneNumber, null);
+    }
+
+    public void sendOrderConfirmedConcise(String toPhoneNumber, Instant checkoutInstant) {
+        if (checkoutInstant == null) {
+            log.error("Missing required checkout timestamp when sending concise confirmation to {}. Refusing to send message.", toPhoneNumber);
+            return;
+        }
+
+        String deliveryPromise = resolveDeliveryPromise(checkoutInstant);
+        String bodyText = String.format(WhatsAppConstants.ORDER_CONFIRMED_ALREADY_HAS_LOCATION, deliveryPromise);
+        sendTextUpdate(toPhoneNumber, bodyText);
+    }
+
+    public void sendEditOrderPrompt(String toPhoneNumber) {
+        sendCatalogMessage(toPhoneNumber, WhatsAppConstants.EDIT_ORDER_PROMPT);
+    }
+
+    public void sendLocationDisambiguationPrompt(String toPhoneNumber, List<CustomerOrder> candidateOrders, Double lat, Double lng) {
+        String coordinateSuffix = String.format(Locale.ROOT, "%.6f_%.6f", lat, lng);
+
+        if (candidateOrders.size() <= 2) {
+            java.util.List<Map<String, Object>> buttons = new java.util.ArrayList<>();
+            for (CustomerOrder o : candidateOrders) {
+                buttons.add(Map.of(
+                        WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                        WhatsAppConstants.REPLY, Map.of(
+                                WhatsAppConstants.ID, WhatsAppConstants.SETLOC_PREFIX + o.getId() + "_" + coordinateSuffix,
+                                WhatsAppConstants.TITLE, "Order #" + o.getDisplayId()
+                        )
+                ));
+            }
+
+            // Deliver All button if <= 3 buttons total and ID <= 256 chars
+            String deliverAllId = WhatsAppConstants.SETLOC_ALL_PREFIX + coordinateSuffix + "_" +
+                    candidateOrders.stream().map(o -> o.getId().toString()).collect(Collectors.joining("_"));
+            if (buttons.size() < 3 && deliverAllId.length() <= 256) {
+                buttons.add(Map.of(
+                        WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_REPLY,
+                        WhatsAppConstants.REPLY, Map.of(
+                                WhatsAppConstants.ID, deliverAllId,
+                                WhatsAppConstants.TITLE, "Deliver All"
+                        )
+                ));
+            }
+
+            String bodyText = "📍 You have multiple active orders awaiting a delivery location.\n\nWhich order is this pin for?";
+            Map<String, Object> body = Map.of(
+                    WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                    WhatsAppConstants.TO, toPhoneNumber,
+                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                    WhatsAppConstants.INTERACTIVE, Map.of(
+                            WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_BUTTON,
+                            WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                            WhatsAppConstants.ACTION, Map.of(WhatsAppConstants.BUTTONS, buttons.toArray())
+                    )
+            );
+            sendPostRequest(toPhoneNumber, bodyText + "\n[Location disambiguation buttons]", body);
+        } else {
+            // Interactive List Message for > 2 candidate orders
+            java.util.List<Map<String, Object>> rows = new java.util.ArrayList<>();
+            for (CustomerOrder o : candidateOrders) {
+                String rowId = WhatsAppConstants.SETLOC_PREFIX + o.getId() + "_" + coordinateSuffix;
+                rows.add(Map.of(
+                        WhatsAppConstants.ID, rowId,
+                        WhatsAppConstants.TITLE, "Order #" + o.getDisplayId(),
+                        WhatsAppConstants.DESCRIPTION, "Total: ₹" + o.getTotalAmount()
+                ));
+            }
+
+            // Guardrail 1: Deliver All row check against Meta 200 character list-row ID limit
+            String deliverAllId = WhatsAppConstants.SETLOC_ALL_PREFIX + coordinateSuffix + "_" +
+                    candidateOrders.stream().map(o -> o.getId().toString()).collect(Collectors.joining("_"));
+            if (deliverAllId.length() <= 200 && rows.size() < 10) {
+                rows.add(Map.of(
+                        WhatsAppConstants.ID, deliverAllId,
+                        WhatsAppConstants.TITLE, "Deliver All Orders",
+                        WhatsAppConstants.DESCRIPTION, "Apply location to all active pending orders"
+                ));
+            }
+
+            String bodyText = "📍 You have " + candidateOrders.size() + " active orders awaiting a delivery location.\n\nSelect which order to deliver to this pin:";
+            Map<String, Object> body = Map.of(
+                    WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP,
+                    WhatsAppConstants.TO, toPhoneNumber,
+                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_INTERACTIVE,
+                    WhatsAppConstants.INTERACTIVE, Map.of(
+                            WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_LIST,
+                            WhatsAppConstants.HEADER, Map.of(
+                                    WhatsAppConstants.TYPE, WhatsAppConstants.MESSAGE_TYPE_TEXT,
+                                    WhatsAppConstants.TEXT, "Select Order"
+                            ),
+                            WhatsAppConstants.BODY, Map.of(WhatsAppConstants.TEXT, bodyText),
+                            WhatsAppConstants.ACTION, Map.of(
+                                    WhatsAppConstants.BUTTON, "Choose Order",
+                                    WhatsAppConstants.SECTIONS, new Object[]{
+                                            Map.of(
+                                                    WhatsAppConstants.TITLE, "Active Orders",
+                                                    WhatsAppConstants.ROWS, rows
+                                            )
+                                    }
+                            )
+                    )
+            );
+            sendPostRequest(toPhoneNumber, bodyText + "\n[Location disambiguation list]", body);
+        }
+    }
+
     public void sendCatalogMessage(String recipientId) {
+        sendCatalogMessage(recipientId,
+                "Welcome to *GreenGram!* 🛒\n\n" +
+                        "Your grocery purchases made easy.\n\n" +
+                        "Explore our products and place your order below. 👇");
+    }
+
+    public void sendCatalogMessage(String recipientId, String bodyText) {
         Map<String, Object> payload = new java.util.HashMap<>();
         payload.put(WhatsAppConstants.MESSAGING_PRODUCT, WhatsAppConstants.WHATSAPP);
         payload.put("recipient_type", "individual");
@@ -415,10 +706,7 @@ public class WhatsAppOutboundClient {
         Map<String, Object> interactive = new java.util.HashMap<>();
         interactive.put(WhatsAppConstants.TYPE, "catalog_message");
         interactive.put(WhatsAppConstants.BODY, Map.of(
-                WhatsAppConstants.TEXT,
-                "Welcome to *GreenGram!* 🛒\n\n" +
-                        "Your everyday groceries, made easy.\n\n" +
-                        "Explore our products and place your order below. 👇"
+                WhatsAppConstants.TEXT, bodyText
         ));
         interactive.put(WhatsAppConstants.ACTION, Map.of("name", "catalog_message"));
         
@@ -432,7 +720,7 @@ public class WhatsAppOutboundClient {
         }
 
         log.info("Sending interactive catalog message to {}", recipientId);
-        String catalogDescription = "Welcome to *GreenGram!* 🛒\n\nYour everyday groceries, made easy.\n\nExplore our products and place your order below. 👇\n[Interactive Catalog: View Products Action]";
+        String catalogDescription = bodyText + "\n[Interactive Catalog: View Products Action]";
         sendPostRequest(recipientId, catalogDescription, payload);
     }
 }

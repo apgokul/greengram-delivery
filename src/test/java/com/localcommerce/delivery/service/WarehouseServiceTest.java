@@ -1,5 +1,7 @@
 package com.localcommerce.delivery.service;
 
+import com.localcommerce.delivery.dto.CancellationResult;
+import com.localcommerce.delivery.enums.CancellationActor;
 import com.localcommerce.delivery.client.WhatsAppOutboundClient;
 import com.localcommerce.delivery.enums.OrderStatus;
 import com.localcommerce.delivery.model.CustomerOrder;
@@ -33,6 +35,9 @@ class WarehouseServiceTest {
     
     @Mock
     private WarehouseAlertService warehouseAlertService;
+
+    @Mock
+    private OrderService orderService;
 
     @InjectMocks
     private WarehouseService warehouseService;
@@ -112,5 +117,27 @@ class WarehouseServiceTest {
 
         verifyNoInteractions(orderRepo);
         verifyNoInteractions(warehouseAlertService);
+    }
+
+    @Test
+    void testHandleStockIssue_Success_SendsConfirmationToWarehouse() {
+        when(orderService.cancelOrder(1042L, "Warehouse Stock Issue", CancellationActor.WAREHOUSE))
+                .thenReturn(CancellationResult.success(null, CancellationActor.WAREHOUSE, "Warehouse Stock Issue"));
+
+        warehouseService.processButtonTap(warehousePhoneNumber, "STOCK_ISSUE_1042");
+
+        verify(orderService).cancelOrder(1042L, "Warehouse Stock Issue", CancellationActor.WAREHOUSE);
+        verify(outboundClient).sendTextUpdate(warehousePhoneNumber, "✅ Order #1042 cancelled due to stock issue.");
+    }
+
+    @Test
+    void testHandleStockIssue_Failure_SendsFeedbackToWarehouse() {
+        when(orderService.cancelOrder(1042L, "Warehouse Stock Issue", CancellationActor.WAREHOUSE))
+                .thenReturn(CancellationResult.alreadyDelivered(null, CancellationActor.WAREHOUSE));
+
+        warehouseService.processButtonTap(warehousePhoneNumber, "STOCK_ISSUE_1042");
+
+        verify(orderService).cancelOrder(1042L, "Warehouse Stock Issue", CancellationActor.WAREHOUSE);
+        verify(outboundClient).sendTextUpdate(warehousePhoneNumber, "⚠️ This order has already been delivered and cannot be cancelled.");
     }
 }
